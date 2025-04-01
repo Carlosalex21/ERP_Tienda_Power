@@ -35,6 +35,11 @@ ALLOWED_HOSTS = []
 
 # Application definition
 
+APPS = [
+    "erp",
+    "tienda",
+]
+
 INSTALLED_APPS = [
     "django.contrib.admin",
     "django.contrib.auth",
@@ -43,8 +48,7 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
-    "erp_tienda",
-]
+] + APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",

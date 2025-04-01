@@ -280,6 +280,7 @@ class Producto(models.Model):
     slug = models.CharField(unique=True, max_length=100, blank=True, null=True)
     peso = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     dimensiones = models.CharField(max_length=50, blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         managed = False
