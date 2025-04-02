@@ -14,7 +14,6 @@ class Almacen(models.Model):
     telefono = models.CharField(max_length=15, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Almacen'
 
 
@@ -22,7 +21,6 @@ class Atributoproducto(models.Model):
     nombre = models.CharField(max_length=100)
 
     class Meta:
-        managed = False
         db_table = 'AtributoProducto'
 
 
@@ -33,7 +31,6 @@ class Carrito(models.Model):
     fecha_actualizacion = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Carrito'
 
 
@@ -43,7 +40,6 @@ class Categoriaproducto(models.Model):
     padre = models.ForeignKey('self', models.DO_NOTHING, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'CategoriaProducto'
 
 
@@ -58,9 +54,9 @@ class Cliente(models.Model):
     provincia = models.CharField(max_length=50, blank=True, null=True)
     fecha_registro = models.DateTimeField(blank=True, null=True)
     usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
-        managed = False
         db_table = 'Cliente'
         unique_together = (('tipo_documento', 'documento'),)
 
@@ -71,7 +67,6 @@ class Configuracioniva(models.Model):
     fecha_creacion = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'ConfiguracionIVA'
 
 
@@ -83,7 +78,6 @@ class Consentimientousuario(models.Model):
     ip_aceptacion = models.GenericIPAddressField()
 
     class Meta:
-        managed = False
         db_table = 'ConsentimientoUsuario'
 
 
@@ -97,7 +91,6 @@ class Contabilidad(models.Model):
     pedido_proveedor = models.ForeignKey('Pedidoproveedor', models.DO_NOTHING, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Contabilidad'
 
 
@@ -114,7 +107,6 @@ class Cupondescuento(models.Model):
     solo_almacen = models.ForeignKey(Almacen, models.DO_NOTHING, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'CuponDescuento'
 
 
@@ -129,7 +121,6 @@ class Detallefactura(models.Model):
     total_linea = models.DecimalField(max_digits=10, decimal_places=2)
 
     class Meta:
-        managed = False
         db_table = 'DetalleFactura'
 
 
@@ -142,7 +133,6 @@ class Devolucion(models.Model):
     fecha_resolucion = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Devolucion'
 
 
@@ -156,7 +146,6 @@ class Direccionenvio(models.Model):
     predeterminada = models.BooleanField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'DireccionEnvio'
 
 
@@ -171,7 +160,6 @@ class Envio(models.Model):
     fecha_envio = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Envio'
 
 
@@ -192,7 +180,6 @@ class Factura(models.Model):
     nif_factura = models.CharField(max_length=20, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Factura'
 
 
@@ -204,7 +191,6 @@ class Facturaelectronica(models.Model):
     fecha_registro_aeat = models.DateTimeField()
 
     class Meta:
-        managed = False
         db_table = 'FacturaElectronica'
 
 
@@ -216,7 +202,6 @@ class Inventario(models.Model):
     stock_reservado = models.IntegerField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Inventario'
         unique_together = (('producto', 'almacen'),)
 
@@ -227,7 +212,6 @@ class Lecturacodigobarras(models.Model):
     almacen = models.ForeignKey(Almacen, models.DO_NOTHING, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'LecturaCodigoBarras'
 
 
@@ -238,7 +222,6 @@ class Logactividad(models.Model):
     fecha = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'LogActividad'
 
 
@@ -253,7 +236,6 @@ class Orden(models.Model):
     transaccion_id = models.CharField(max_length=100, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Orden'
 
 
@@ -265,12 +247,11 @@ class Pedidoproveedor(models.Model):
     total = models.DecimalField(max_digits=10, decimal_places=2)
 
     class Meta:
-        managed = False
         db_table = 'PedidoProveedor'
 
 
 class Producto(models.Model):
-    nombre = models.CharField(max_length=100)
+    nombre = models.CharField(max_length=150)
     descripcion = models.TextField(blank=True, null=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2)
     codigo_barras = models.CharField(unique=True, max_length=50)
@@ -280,10 +261,11 @@ class Producto(models.Model):
     slug = models.CharField(unique=True, max_length=100, blank=True, null=True)
     peso = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     dimensiones = models.CharField(max_length=50, blank=True, null=True)
+
+    #Campo de eliminacion logica
     activo = models.BooleanField(default=True)
 
     class Meta:
-        managed = False
         db_table = 'Producto'
 
 
@@ -292,7 +274,6 @@ class Productocategoria(models.Model):
     categoria = models.ForeignKey(Categoriaproducto, models.DO_NOTHING, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'ProductoCategoria'
         unique_together = (('producto', 'categoria'),)
 
@@ -307,7 +288,6 @@ class Promocion(models.Model):
     usos_actuales = models.IntegerField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Promocion'
 
 
@@ -320,7 +300,6 @@ class Proveedor(models.Model):
     plazo_pago = models.IntegerField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Proveedor'
 
 
@@ -331,7 +310,6 @@ class Reportecliente(models.Model):
     producto_mas_comprado = models.ForeignKey(Producto, models.DO_NOTHING, db_column='producto_mas_comprado', blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'ReporteCliente'
 
 
@@ -344,7 +322,6 @@ class Reporteinventario(models.Model):
     almacen = models.ForeignKey(Almacen, models.DO_NOTHING, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'ReporteInventario'
 
 
@@ -357,7 +334,6 @@ class Reporteventa(models.Model):
     almacen = models.ForeignKey(Almacen, models.DO_NOTHING, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'ReporteVenta'
 
 
@@ -369,7 +345,6 @@ class Resenaproducto(models.Model):
     fecha_creacion = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'ResenaProducto'
 
 
@@ -382,7 +357,6 @@ class Reservastock(models.Model):
     fecha_creacion = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'ReservaStock'
 
 
@@ -391,7 +365,6 @@ class Rol(models.Model):
     descripcion = models.TextField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Rol'
 
 
@@ -401,7 +374,6 @@ class Sesionusuario(models.Model):
     fecha_actualizacion = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'SesionUsuario'
 
 
@@ -411,7 +383,6 @@ class Tipodocumentofiscal(models.Model):
     obligatorio = models.BooleanField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'TipoDocumentoFiscal'
 
 
@@ -424,7 +395,6 @@ class Transaccionpago(models.Model):
     fecha = models.DateTimeField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'TransaccionPago'
 
 
@@ -437,7 +407,6 @@ class Transportista(models.Model):
     activo = models.BooleanField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Transportista'
 
 
@@ -458,7 +427,6 @@ class Usuario(models.Model):
     provider = models.CharField(max_length=50, blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'Usuario'
 
 
@@ -470,119 +438,108 @@ class Variacionproducto(models.Model):
     stock = models.IntegerField(blank=True, null=True)
 
     class Meta:
-        managed = False
         db_table = 'VariacionProducto'
 
 
-class AuthGroup(models.Model):
-    name = models.CharField(unique=True, max_length=150)
+# class AuthGroup(models.Model):
+#     name = models.CharField(unique=True, max_length=150)
 
-    class Meta:
-        managed = False
-        db_table = 'auth_group'
-
-
-class AuthGroupPermissions(models.Model):
-    id = models.BigAutoField(primary_key=True)
-    group = models.ForeignKey(AuthGroup, models.DO_NOTHING)
-    permission = models.ForeignKey('AuthPermission', models.DO_NOTHING)
-
-    class Meta:
-        managed = False
-        db_table = 'auth_group_permissions'
-        unique_together = (('group', 'permission'),)
+#     class Meta:
+#         managed = False
+#         db_table = 'auth_group'
 
 
-class AuthPermission(models.Model):
-    name = models.CharField(max_length=255)
-    content_type = models.ForeignKey('DjangoContentType', models.DO_NOTHING)
-    codename = models.CharField(max_length=100)
+# class AuthGroupPermissions(models.Model):
+#     id = models.BigAutoField(primary_key=True)
+#     group = models.ForeignKey(AuthGroup, models.DO_NOTHING)
+#     permission = models.ForeignKey('AuthPermission', models.DO_NOTHING)
 
-    class Meta:
-        managed = False
-        db_table = 'auth_permission'
-        unique_together = (('content_type', 'codename'),)
-
-
-class AuthUser(models.Model):
-    password = models.CharField(max_length=128)
-    last_login = models.DateTimeField(blank=True, null=True)
-    is_superuser = models.BooleanField()
-    username = models.CharField(unique=True, max_length=150)
-    first_name = models.CharField(max_length=150)
-    last_name = models.CharField(max_length=150)
-    email = models.CharField(max_length=254)
-    is_staff = models.BooleanField()
-    is_active = models.BooleanField()
-    date_joined = models.DateTimeField()
-
-    class Meta:
-        managed = False
-        db_table = 'auth_user'
+#     class Meta:
+#         managed = False
+#         db_table = 'auth_group_permissions'
+#         unique_together = (('group', 'permission'),)
 
 
-class AuthUserGroups(models.Model):
-    id = models.BigAutoField(primary_key=True)
-    user = models.ForeignKey(AuthUser, models.DO_NOTHING)
-    group = models.ForeignKey(AuthGroup, models.DO_NOTHING)
+# class AuthPermission(models.Model):
+#     name = models.CharField(max_length=255)
+#     content_type = models.ForeignKey('DjangoContentType', models.DO_NOTHING)
+#     codename = models.CharField(max_length=100)
 
-    class Meta:
-        managed = False
-        db_table = 'auth_user_groups'
-        unique_together = (('user', 'group'),)
-
-
-class AuthUserUserPermissions(models.Model):
-    id = models.BigAutoField(primary_key=True)
-    user = models.ForeignKey(AuthUser, models.DO_NOTHING)
-    permission = models.ForeignKey(AuthPermission, models.DO_NOTHING)
-
-    class Meta:
-        managed = False
-        db_table = 'auth_user_user_permissions'
-        unique_together = (('user', 'permission'),)
+#     class Meta:
+#         managed = False
+#         db_table = 'auth_permission'
+#         unique_together = (('content_type', 'codename'),)
 
 
-class DjangoAdminLog(models.Model):
-    action_time = models.DateTimeField()
-    object_id = models.TextField(blank=True, null=True)
-    object_repr = models.CharField(max_length=200)
-    action_flag = models.SmallIntegerField()
-    change_message = models.TextField()
-    content_type = models.ForeignKey('DjangoContentType', models.DO_NOTHING, blank=True, null=True)
-    user = models.ForeignKey(AuthUser, models.DO_NOTHING)
+# class AuthUser(models.Model):
+#     password = models.CharField(max_length=128)
+#     last_login = models.DateTimeField(blank=True, null=True)
+#     is_superuser = models.BooleanField()
+#     username = models.CharField(unique=True, max_length=150)
+#     first_name = models.CharField(max_length=150)
+#     last_name = models.CharField(max_length=150)
+#     email = models.CharField(max_length=254)
+#     is_staff = models.BooleanField()
+#     is_active = models.BooleanField()
+#     date_joined = models.DateTimeField()
 
-    class Meta:
-        managed = False
-        db_table = 'django_admin_log'
-
-
-class DjangoContentType(models.Model):
-    app_label = models.CharField(max_length=100)
-    model = models.CharField(max_length=100)
-
-    class Meta:
-        managed = False
-        db_table = 'django_content_type'
-        unique_together = (('app_label', 'model'),)
+#     class Meta:
+#         managed = False
+#         db_table = 'auth_user'
 
 
-class DjangoMigrations(models.Model):
-    id = models.BigAutoField(primary_key=True)
-    app = models.CharField(max_length=255)
-    name = models.CharField(max_length=255)
-    applied = models.DateTimeField()
+# class AuthUserGroups(models.Model):
+#     id = models.BigAutoField(primary_key=True)
+#     user = models.ForeignKey(AuthUser, models.DO_NOTHING)
+#     group = models.ForeignKey(AuthGroup, models.DO_NOTHING)
 
-    class Meta:
-        managed = False
-        db_table = 'django_migrations'
+#     class Meta:
+#         managed = False
+#         db_table = 'auth_user_groups'
+#         unique_together = (('user', 'group'),)
 
 
-class DjangoSession(models.Model):
-    session_key = models.CharField(primary_key=True, max_length=40)
-    session_data = models.TextField()
-    expire_date = models.DateTimeField()
+# class AuthUserUserPermissions(models.Model):
+#     id = models.BigAutoField(primary_key=True)
+#     user = models.ForeignKey(AuthUser, models.DO_NOTHING)
+#     permission = models.ForeignKey(AuthPermission, models.DO_NOTHING)
 
-    class Meta:
-        managed = False
-        db_table = 'django_session'
+#     class Meta:
+#         managed = False
+#         db_table = 'auth_user_user_permissions'
+#         unique_together = (('user', 'permission'),)
+
+
+# class DjangoAdminLog(models.Model):
+#     action_time = models.DateTimeField()
+#     object_id = models.TextField(blank=True, null=True)
+#     object_repr = models.CharField(max_length=200)
+#     action_flag = models.SmallIntegerField()
+#     change_message = models.TextField()
+#     content_type = models.ForeignKey('DjangoContentType', models.DO_NOTHING, blank=True, null=True)
+#     user = models.ForeignKey(AuthUser, models.DO_NOTHING)
+
+#     class Meta:
+#         managed = False
+#         db_table = 'django_admin_log'
+
+
+# class DjangoContentType(models.Model):
+#     app_label = models.CharField(max_length=100)
+#     model = models.CharField(max_length=100)
+
+#     class Meta:
+#         managed = False
+#         db_table = 'django_content_type'
+#         unique_together = (('app_label', 'model'),)
+
+
+
+# class DjangoSession(models.Model):
+#     session_key = models.CharField(primary_key=True, max_length=40)
+#     session_data = models.TextField()
+#     expire_date = models.DateTimeField()
+
+#     class Meta:
+#         managed = False
+#         db_table = 'django_session'

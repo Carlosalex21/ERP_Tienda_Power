@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from backend.models import Producto
+from .models import *
 from .views import *
 
 class ProductoSerializer(serializers.ModelSerializer):
@@ -23,9 +23,16 @@ class ProductoSerializer(serializers.ModelSerializer):
             
     #Validar si campo nombre existe 
         if Producto.objects.filter(nombre=data.get("nombre")).exists():
-            raise serializers.ValidationError({"mensaje":"El nombre {nombre} ya existe"})
+            raise serializers.ValidationError({"mensaje":"El nombre ya existe"})
         
         return data
+    
+class ClienteSerializer(serializers.ModelSerializer):
+	
+	class Meta:
+		model = Cliente
+		fields = "__all__"
+
         
         
         
