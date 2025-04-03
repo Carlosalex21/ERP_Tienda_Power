@@ -5,7 +5,8 @@
 #   * Make sure each ForeignKey and OneToOneField has `on_delete` set to the desired behavior
 #   * Remove `managed = False` lines if you wish to allow Django to create, modify, and delete the table
 # Feel free to rename the models, but don't rename db_table values or field names.
-from django.db import models # type: ignore
+from django.db import models
+from autoslug import AutoSlugField # type: ignore
 
 
 class Almacen(models.Model):
@@ -36,8 +37,9 @@ class Carrito(models.Model):
 
 class Categoriaproducto(models.Model):
     nombre = models.CharField(unique=True, max_length=100)
-    slug = models.CharField(unique=True, max_length=100)
+    slug = AutoSlugField(populate_from="nombre")
     padre = models.ForeignKey('self', models.DO_NOTHING, blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'CategoriaProducto'
