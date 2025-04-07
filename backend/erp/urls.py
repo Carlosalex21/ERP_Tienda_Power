@@ -7,6 +7,12 @@ urlpatterns = [
     path("producto/crear", ProductoCreateUpdateDelete.as_view()),
     path("producto/editar/<int:id>", ProductoCreateUpdateDelete.as_view()),
     path("producto/eliminar/<int:id>", ProductoCreateUpdateDelete.as_view()),
+    #Almacen
+    path("almacen", AlmacenList.as_view()),
+    path("almacen/<int:id>", AlmacenGet.as_view()),
+    path("almacen/crear", AlmacenCRUD.as_view()),
+    path("almacen/editar/<int:id>", AlmacenCRUD.as_view()),
+    path("almacen/eliminar/<int:id>", AlmacenCRUD.as_view()),
     #tabla categoria Producto
     path("categoria", CategoriaList.as_view()),
     path("categoria/<int:id>", CategoriaGet.as_view()),

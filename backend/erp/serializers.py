@@ -29,6 +29,59 @@ class ProductoSerializer(serializers.ModelSerializer):
         return data
 
 
+class AlmacenSerializer(serializers.ModelSerializer):
+
+    def validate(self,data):
+
+        campo_almacen = ["nombre", "direccion", "telefono"]
+
+        for campo in campo_almacen:
+            if not data.get(campo) or data.get(campo)==None:
+                raise serializers.ValidationError({"mensaje":f"El campo {campo} no puede ir vacio"})
+            
+        if Almacen.objects.filter(nombre=data.get("nombre")).exists():
+                raise serializers.ValidationError({"mensaje":f"El nombre ya existe"})
+        
+        return data
+        
+    
+    class Meta:
+        model = Almacen
+        fields = "__all__"
+
+class InventarioSerializer(serializers.ModelSerializer):
+    
+    def validate_producto(self, value):
+        if not value.activo:
+            raise serializers.ValidationError("No puedes agregar productos inactivos al inventario.")
+        return value
+
+    def validate_almacen(self, value):
+        if not value:
+            raise serializers.ValidationError("El inventario debe estar asociado a un almacén válido.")
+        return value
+  
+    def validate_cantidad(self, value):
+        if value < 0:
+             raise serializers.ValidationError("La cantidad de inventario no puede ser negativa.")
+        return value
+    
+    def validate(self, data):
+        """ Validar que la cantidad sea al menos igual al stock mínimo """
+        cantidad = data.get("cantidad", 0)
+        stock_minimo = data.get("stock_minimo", 0)
+
+        if cantidad < stock_minimo:
+             raise serializers.ValidationError("La cantidad disponible no puede ser menor que el stock mínimo.")
+
+        return data
+    
+    class Meta:
+        model = Inventario
+        fields = "__all__"
+
+
+
 class CategoriaSerializer(serializers.ModelSerializer):
 
     def validate_padre(self, value):

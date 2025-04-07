@@ -13,6 +13,7 @@ class Almacen(models.Model):
     nombre = models.CharField(max_length=100)
     direccion = models.TextField()
     telefono = models.CharField(max_length=15, blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Almacen'
@@ -197,15 +198,25 @@ class Facturaelectronica(models.Model):
 
 
 class Inventario(models.Model):
-    producto = models.ForeignKey('Producto', models.DO_NOTHING, blank=True, null=True)
-    almacen = models.ForeignKey(Almacen, models.DO_NOTHING, blank=True, null=True)
-    cantidad = models.IntegerField(blank=True, null=True)
+    producto = models.ForeignKey('Producto', models.SET_NULL, blank=True, null=True)
+    almacen = models.ForeignKey(Almacen, models.SET_NULL, blank=True, null=True,)
     stock_minimo = models.IntegerField(blank=True, null=True)
-    stock_reservado = models.IntegerField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Inventario'
         unique_together = (('producto', 'almacen'),)
+
+
+class MovimientoInventario(models.Model):
+    inventario = models.ForeignKey(Inventario, on_delete=models.CASCADE)
+    tipo_movimiento = models.CharField(choices=[('entrada', 'Entrada'), ('salida', 'Salida')], max_length=10)
+    cantidad = models.ForeignKey('Producto', models.SET_NULL, blank=True, null=True)
+    fecha_movimiento = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'MovimientoInventario'
+
 
 
 class Lecturacodigobarras(models.Model):
@@ -256,6 +267,8 @@ class Producto(models.Model):
     nombre = models.CharField(max_length=150)
     descripcion = models.TextField(blank=True, null=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2)
+    cantidad = models.IntegerField(blank=True, null=True)
+    almacen = models.ForeignKey(Almacen, on_delete=models.SET_NULL, blank=True, null=True, default=1)
     codigo_barras = models.CharField(unique=True, max_length=50)
     disponible_online = models.BooleanField(blank=True, null=True)
     descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)

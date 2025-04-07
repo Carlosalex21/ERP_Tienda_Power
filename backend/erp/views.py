@@ -5,7 +5,7 @@ from django.http.response import JsonResponse
 from http import HTTPStatus
 from rest_framework.views import APIView  
 from rest_framework import status
-from .serializers import ProductoSerializer, ClienteSerializer, CategoriaSerializer
+from .serializers import ProductoSerializer, ClienteSerializer, CategoriaSerializer, AlmacenSerializer
 # Create your views here.
 
 #Productos por id
@@ -67,6 +67,69 @@ class ProductoCreateUpdateDelete(APIView):
 		except Producto.DoesNotExist:
 			return JsonResponse({"estado":"error","mensaje":"Producto no encontrado"},status=HTTPStatus.NOT_FOUND)
 
+
+
+class AlmacenGet(APIView):
+
+	def get(self, request, id):
+		try:
+			data = Almacen.objects.get(id=id)
+			serializer = AlmacenSerializer(data)
+			return JsonResponse({"data":serializer.data}, status=HTTPStatus.OK)
+		except Exception as e:
+			return JsonResponse({"estado":"error","mensaje":"Almacen no encontrado"}, status=HTTPStatus.NOT_FOUND)
+
+
+class AlmacenList(APIView):
+
+	def get(self, request):
+		almacen = Almacen.objects.filter(activo=True).order_by("id")
+		serializer = AlmacenSerializer(almacen, many=True)
+
+		return JsonResponse({"almacenes":serializer.data}, status=HTTPStatus.OK)
+
+class AlmacenCRUD(APIView):
+
+	def post(self, request):
+		serializer = AlmacenSerializer(data=request.data)
+		if serializer.is_valid():
+			serializer.save()
+			return JsonResponse({"estado":"creado","data":serializer.data},status=HTTPStatus.CREATED)
+		else:
+			return JsonResponse({"estado":"error","mensaje":serializer.errors},status=HTTPStatus.BAD_REQUEST)
+		
+	def put(self, request, id):
+		try:
+			almacen = Almacen.objects.get(id=id)
+		except Almacen.DoesNotExist:
+			return JsonResponse({"estado":"error","mensaje":"Almacen no encontrado"},status=HTTPStatus.NOT_FOUND)
+
+		serializer = AlmacenSerializer(almacen, data=request.data, partial=True)
+		if serializer.is_valid():
+			serializer.save()
+			return JsonResponse({"estado":"actualizado","data":serializer.data},status=HTTPStatus.OK)
+		else:
+			return JsonResponse({"estado":"error","mensaje":serializer.errors},status=HTTPStatus.BAD_REQUEST)
+		
+	def delete(self, request, id):
+		try:
+			almacen = Almacen.objects.get(id=id, activo=True)
+			almacen.activo = False
+			almacen.save()
+			return JsonResponse({"estado":"eliminado","mensaje":"almacen inactivo"},status=HTTPStatus.OK)
+		except Producto.DoesNotExist:
+			return JsonResponse({"estado":"error","mensaje":"Almacen no encontrado"},status=HTTPStatus.NOT_FOUND)
+
+
+class InventarioGet(APIView):
+	pass
+
+class InventarioList(APIView):
+	pass
+
+
+class InventarioCrud(APIView):
+	pass
 
 class CategoriaGet(APIView):
 
