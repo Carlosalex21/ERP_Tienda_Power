@@ -5,8 +5,69 @@ from django.http.response import JsonResponse
 from http import HTTPStatus
 from rest_framework.views import APIView  
 from rest_framework import status
-from .serializers import ProductoSerializer, ClienteSerializer, CategoriaSerializer, AlmacenSerializer
+from .serializers import ProductoSerializer, ClienteSerializer, CategoriaSerializer, AlmacenSerializer, InventarioSerializer, UserMetadataSerializer
+from django.contrib.auth import aunthenticate
 # Create your views here.
+
+
+class UserCRUD(APIView):
+
+	def post(self, request):
+		user = User.objects.create_user(username=request.data.get("email"), password=request.data.get("password"))
+		serializer = UserMetadataSerializer(user)
+		if serializer.is_valid():
+			serializer.save()
+			return JsonResponse({"estado":"creado","data":serializer.data},status=HTTPStatus.CREATED)
+		
+		
+		return JsonResponse({"estado":"error","mensaje":serializer.errors},status=HTTPStatus.BAD_REQUEST)
+	
+	def put(self, request, id):
+		try:
+			user = User.objects.get(id=id)
+		except User.DoesNotExist:
+			return JsonResponse({"estado":"error","mensaje":"Usuario no encontrado"},status=HTTPStatus.NOT_FOUND)
+		
+		serializer = UserMetadataSerializer(user, request=request.data, partial=True)
+		if serializer.is_valid():
+			serializer.save()
+			return JsonResponse({"estado":"actualizado","data":serializer.data},status=HTTPStatus.OK)
+			
+		return JsonResponse({"estado":"error","mensaje":serializer.errors},status=HTTPStatus.BAD_REQUEST)
+	
+	def delete(self, request, id):
+		try:
+			user = User.objects.get(id=id, is_active=True)
+			user.is_active=False
+			user.save()
+			return JsonResponse({"estado":"eliminado","mensaje":"Producto inactivo"},status=HTTPStatus.OK)
+		except Producto.DoesNotExist:
+			return JsonResponse({"estado":"error","mensaje":"Producto no encontrado"},status=HTTPStatus.NOT_FOUND)
+		
+
+
+class UserLogin(APIView):
+    def post(self, request):
+        email = request.data.get("email")
+        password = request.data.get("password")
+
+        # Autenticar al usuario
+        user = aunthenticate(username=email, password=password)
+        
+        if user is not None:
+            return JsonResponse({
+                "estado": "success",
+                "mensaje": "Inicio de sesión exitoso",
+                "user_id": user.id,
+                "email": user.email,
+                "username": user.username
+            }, status=HTTPStatus.OK)
+        else:
+            return JsonResponse({
+                "estado": "error",
+                "mensaje": "Credenciales inválidas"
+            }, status=HTTPStatus.UNAUTHORIZED)
+
 
 #Productos por id
 class ProductoGet(APIView):
@@ -122,14 +183,54 @@ class AlmacenCRUD(APIView):
 
 
 class InventarioGet(APIView):
-	pass
+	def get(self, request, id):
+		try:
+			data = Inventario.objects.get(id=id)
+			serializer = InventarioSerializer(data)
+			return JsonResponse({"data":serializer.data}, status=HTTPStatus.OK)
+		except Exception as e:
+			return JsonResponse({"estado":"error","mensaje":"Inventario no encontrado"}, status=HTTPStatus.NOT_FOUND) 
 
 class InventarioList(APIView):
-	pass
+	def get(self, request):
+		data = Inventario.objects.filter(activo=True).order_by("id")
+		serializer = InventarioSerializer(data, many=True)
+		return JsonResponse({"data":serializer.data}, status=HTTPStatus.OK)
 
 
 class InventarioCrud(APIView):
-	pass
+	
+	def post(self, request):
+		serializer = InventarioSerializer(data=request.data)
+		if serializer.is_valid():
+			serializer.save()
+			return JsonResponse({"estado":"creado","data":serializer.data},status=HTTPStatus.CREATED)
+		else:
+			return JsonResponse({"estado":"error","mensaje":serializer.errors},status=HTTPStatus.BAD_REQUEST)
+		
+	def put(self, request, id):
+		try:
+			data = Inventario.objects.get(id=id)
+		except Inventario.DoesNotExist:
+			return JsonResponse({"estado":"error","mensaje":"Inventario no encontrado"},status=HTTPStatus.NOT_FOUND)
+
+		serializer = InventarioSerializer(data, request=request.data, partial=True)
+		if serializer.is_valid():
+			serializer.save()
+			return JsonResponse({"estado":"actualizado","data":serializer.data},status=HTTPStatus.OK)
+			
+		return JsonResponse({"estado":"error","mensaje":serializer.errors},status=HTTPStatus.BAD_REQUEST)
+	
+
+	def delete(self, request, id):
+		try:
+			data = Inventario.objects.get(id=id, activo=True)
+			data.activo = False
+			data.save()
+			return JsonResponse({"estado":"eliminado","mensaje":"Inventario inactivo"},status=HTTPStatus.OK)
+		except Inventario.DoesNotExist:
+			return JsonResponse({"estado":"error","mensaje":"Inventario no encontrado"},status=HTTPStatus.NOT_FOUND)
+
 
 class CategoriaGet(APIView):
 

@@ -7,9 +7,10 @@
 # Feel free to rename the models, but don't rename db_table values or field names.
 from django.db import models
 from autoslug import AutoSlugField # type: ignore
+from django.contrib.auth.models import User
 
 
-class Almacen(models.Model):
+class Almacen(models.Model): #Listo
     nombre = models.CharField(max_length=100)
     direccion = models.TextField()
     telefono = models.CharField(max_length=15, blank=True, null=True)
@@ -27,7 +28,7 @@ class Atributoproducto(models.Model):
 
 
 class Carrito(models.Model):
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey("UserMetadata", models.DO_NOTHING, blank=True, null=True)
     producto = models.ForeignKey('Producto', models.DO_NOTHING, blank=True, null=True)
     cantidad = models.IntegerField(blank=True, null=True)
     fecha_actualizacion = models.DateTimeField(blank=True, null=True)
@@ -36,7 +37,7 @@ class Carrito(models.Model):
         db_table = 'Carrito'
 
 
-class Categoriaproducto(models.Model):
+class Categoriaproducto(models.Model): #Listo
     nombre = models.CharField(unique=True, max_length=100)
     slug = AutoSlugField(populate_from="nombre")
     padre = models.ForeignKey('self', models.DO_NOTHING, blank=True, null=True)
@@ -46,7 +47,7 @@ class Categoriaproducto(models.Model):
         db_table = 'CategoriaProducto'
 
 
-class Cliente(models.Model):
+class Cliente(models.Model): #listo
     tipo_documento = models.CharField(max_length=10)
     documento = models.CharField(max_length=20)
     nombre = models.CharField(max_length=100)
@@ -56,7 +57,7 @@ class Cliente(models.Model):
     codigo_postal = models.CharField(max_length=5, blank=True, null=True)
     provincia = models.CharField(max_length=50, blank=True, null=True)
     fecha_registro = models.DateTimeField(blank=True, null=True)
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     activo = models.BooleanField(default=True)
 
     class Meta:
@@ -74,7 +75,7 @@ class Configuracioniva(models.Model):
 
 
 class Consentimientousuario(models.Model):
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     tipo_consentimiento = models.CharField(max_length=50)
     version = models.TextField()
     fecha_aceptacion = models.DateTimeField(blank=True, null=True)
@@ -197,10 +198,9 @@ class Facturaelectronica(models.Model):
         db_table = 'FacturaElectronica'
 
 
-class Inventario(models.Model):
+class Inventario(models.Model): #Listo
     producto = models.ForeignKey('Producto', models.SET_NULL, blank=True, null=True)
     almacen = models.ForeignKey(Almacen, models.SET_NULL, blank=True, null=True,)
-    stock_minimo = models.IntegerField(blank=True, null=True)
     activo = models.BooleanField(default=True)
 
     class Meta:
@@ -212,6 +212,7 @@ class MovimientoInventario(models.Model):
     inventario = models.ForeignKey(Inventario, on_delete=models.CASCADE)
     tipo_movimiento = models.CharField(choices=[('entrada', 'Entrada'), ('salida', 'Salida')], max_length=10)
     cantidad = models.ForeignKey('Producto', models.SET_NULL, blank=True, null=True)
+    stock_minimo = models.IntegerField(blank=True, null=True)
     fecha_movimiento = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -229,7 +230,7 @@ class Lecturacodigobarras(models.Model):
 
 
 class Logactividad(models.Model):
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     accion = models.CharField(max_length=100)
     detalles = models.TextField(blank=True, null=True)
     fecha = models.DateTimeField(blank=True, null=True)
@@ -239,7 +240,7 @@ class Logactividad(models.Model):
 
 
 class Orden(models.Model):
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     cliente = models.ForeignKey(Cliente, models.DO_NOTHING, blank=True, null=True)
     fecha_creacion = models.DateTimeField(blank=True, null=True)
     estado = models.CharField(max_length=20)
@@ -263,12 +264,12 @@ class Pedidoproveedor(models.Model):
         db_table = 'PedidoProveedor'
 
 
-class Producto(models.Model):
+class Producto(models.Model): #Listo
     nombre = models.CharField(max_length=150)
     descripcion = models.TextField(blank=True, null=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2)
     cantidad = models.IntegerField(blank=True, null=True)
-    almacen = models.ForeignKey(Almacen, on_delete=models.SET_NULL, blank=True, null=True, default=1)
+    almacen = models.ForeignKey(Almacen, on_delete=models.SET_NULL, blank=True, null=True)
     codigo_barras = models.CharField(unique=True, max_length=50)
     disponible_online = models.BooleanField(blank=True, null=True)
     descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
@@ -276,6 +277,7 @@ class Producto(models.Model):
     slug = models.CharField(unique=True, max_length=100, blank=True, null=True)
     peso = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     dimensiones = models.CharField(max_length=50, blank=True, null=True)
+    categoria = models.ForeignKey(Categoriaproducto, on_delete=models.SET_NULL,blank=False, null=True)
 
     #Campo de eliminacion logica
     activo = models.BooleanField(default=True)
@@ -354,7 +356,7 @@ class Reporteventa(models.Model):
 
 class Resenaproducto(models.Model):
     producto = models.ForeignKey(Producto, models.DO_NOTHING, blank=True, null=True)
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     calificacion = models.IntegerField()
     comentario = models.TextField(blank=True, null=True)
     fecha_creacion = models.DateTimeField(blank=True, null=True)
@@ -425,24 +427,18 @@ class Transportista(models.Model):
         db_table = 'Transportista'
 
 
-class Usuario(models.Model):
-    username = models.CharField(unique=True, max_length=150)
-    password = models.CharField(max_length=128)
-    first_name = models.CharField(max_length=30, blank=True, null=True)
-    last_name = models.CharField(max_length=150, blank=True, null=True)
-    email = models.CharField(unique=True, max_length=254, blank=True, null=True)
-    is_staff = models.BooleanField()
-    is_active = models.BooleanField()
-    date_joined = models.DateTimeField()
+class UserMetadata(models.Model):
+    #Crear token para manejar verificacion de cuenta cuando se registre
+    user = models.ForeignKey(User, models.DO_NOTHING)
+    token = models.CharField(max_length=100, blank=True, null=True)
     rol = models.ForeignKey(Rol, models.DO_NOTHING, blank=True, null=True)
     telefono = models.CharField(max_length=15, blank=True, null=True)
     direccion = models.TextField(blank=True, null=True)
     ultimo_login = models.DateTimeField(blank=True, null=True)
     avatar_url = models.CharField(max_length=255, blank=True, null=True)
-    provider = models.CharField(max_length=50, blank=True, null=True)
 
     class Meta:
-        db_table = 'Usuario'
+        db_table = 'UserMetadata'
 
 
 class Variacionproducto(models.Model):

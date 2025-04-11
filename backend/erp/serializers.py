@@ -2,15 +2,62 @@ from rest_framework import serializers
 from .models import *
 from .views import *
 from django.utils.text import slugify
+from django.contrib.auth.models import User
+import os
+from dotenv import load_dotenv
+from django.http import http404, HttpResponseRedirect
+from django.contrib.auth import aunthenticate
+
+
+class UserMetadataSerializer(serializers.ModelSerializer):
+
+    def validate(self, data):
+        campo_usuario = ["username","password"]
+
+        campo_exists = ["username","email","telefono"]
+        
+        for campo in campo_usuario:
+            if not data.get(campo) or data.get(campo)==None:
+                raise serializers.ValidationError({campo:f"El campo '{campo}' no puede estar vacio"})
+            
+        if data.get(campo_exists).exists():
+            raise serializers.ValidationError({"mensaje":f"El {campo_exists} ya existe"})
+        
+        return data
+
+
+    
+    class Meta:
+        model = UserMetadata
+        fields = ["id","username","password","email"]
+        
+
+
 
 class ProductoSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Producto
         fields = "__all__"
+        depth=1
+
+    def validate_cantidad(self, value):
+        if value < 0:
+             raise serializers.ValidationError("La cantidad del producto no puede ser negativa.")
+        return value
+    
+    def validate_categoria(self, value):
+        if not value:
+            raise serializers.ValidationError("El producto debe estar asociado a una categoria valida")
+        return value
+    
+    def validate_almacen(self,value):
+        if not value:
+            raise serializers.ValidationError("El producto debe estar asociado a un almacen valido")
+        return value
 
     def validate(self, data):
-        campos_producto = ["nombre","descripcion","precio","codigo_barras","descuento","peso","dimensiones"]
+        campos_producto = ["nombre","descripcion","precio","cantidad","categoria","codigo_barras","almacen","peso"]
 
     #Validar si los campos van vacios
         for campo in campos_producto:
@@ -21,6 +68,7 @@ class ProductoSerializer(serializers.ModelSerializer):
 
         if not data.get("precio") or data.get("precio") <= 0:
             raise serializers.ValidationError({"mensaje":"El precio tiene que ser mayor a 0"})
+        
             
     #Validar si campo nombre existe 
         if Producto.objects.filter(nombre=data.get("nombre")).exists():
@@ -40,7 +88,7 @@ class AlmacenSerializer(serializers.ModelSerializer):
                 raise serializers.ValidationError({"mensaje":f"El campo {campo} no puede ir vacio"})
             
         if Almacen.objects.filter(nombre=data.get("nombre")).exists():
-                raise serializers.ValidationError({"mensaje":f"El nombre ya existe"})
+            raise serializers.ValidationError({"mensaje":f"El nombre ya existe"})
         
         return data
         
@@ -51,6 +99,9 @@ class AlmacenSerializer(serializers.ModelSerializer):
 
 class InventarioSerializer(serializers.ModelSerializer):
     
+    # producto_nombre = serializers.CharField(source="producto.nombre", read_only=True)
+    # almacen_nombre = serializers.CharField(source="almacen.nombre", read_only=True)
+
     def validate_producto(self, value):
         if not value.activo:
             raise serializers.ValidationError("No puedes agregar productos inactivos al inventario.")
@@ -60,25 +111,22 @@ class InventarioSerializer(serializers.ModelSerializer):
         if not value:
             raise serializers.ValidationError("El inventario debe estar asociado a un almacén válido.")
         return value
-  
-    def validate_cantidad(self, value):
-        if value < 0:
-             raise serializers.ValidationError("La cantidad de inventario no puede ser negativa.")
-        return value
     
-    def validate(self, data):
-        """ Validar que la cantidad sea al menos igual al stock mínimo """
-        cantidad = data.get("cantidad", 0)
-        stock_minimo = data.get("stock_minimo", 0)
+    # def validate(self, data):
+    #     """ Validar que la cantidad sea al menos igual al stock mínimo """
+    #     cantidad = data.get("cantidad", 0)
+    #     stock_minimo = data.get("stock_minimo", 0)
 
-        if cantidad < stock_minimo:
-             raise serializers.ValidationError("La cantidad disponible no puede ser menor que el stock mínimo.")
+    #     if cantidad < stock_minimo:
+    #          raise serializers.ValidationError("La cantidad disponible no puede ser menor que el stock mínimo.")
 
-        return data
+    #     return data
     
     class Meta:
         model = Inventario
         fields = "__all__"
+        depth=1  #Esto hará que los `ForeignKey` se expandan en la respuesta JSON
+
 
 
 

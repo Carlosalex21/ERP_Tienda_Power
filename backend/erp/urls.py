@@ -13,6 +13,12 @@ urlpatterns = [
     path("almacen/crear", AlmacenCRUD.as_view()),
     path("almacen/editar/<int:id>", AlmacenCRUD.as_view()),
     path("almacen/eliminar/<int:id>", AlmacenCRUD.as_view()),
+    #Inventario
+    path("inventario", InventarioList.as_view()),
+    path("inventario/<int:id>", InventarioGet.as_view()),
+    path("inventario/crear", InventarioCrud.as_view()),
+    path("inventario/editar/<int:id>", InventarioCrud.as_view()),
+    path("inventario/eliminar/<int:id>", InventarioCrud.as_view()),
     #tabla categoria Producto
     path("categoria", CategoriaList.as_view()),
     path("categoria/<int:id>", CategoriaGet.as_view()),
