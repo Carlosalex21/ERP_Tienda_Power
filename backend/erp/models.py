@@ -69,6 +69,7 @@ class Configuracioniva(models.Model):
     porcentaje_iva = models.DecimalField(max_digits=5, decimal_places=2)
     activo = models.BooleanField(blank=True, null=True)
     fecha_creacion = models.DateTimeField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'ConfiguracionIVA'
@@ -135,6 +136,7 @@ class Devolucion(models.Model):
     monto_reembolso = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     fecha_solicitud = models.DateTimeField(blank=True, null=True)
     fecha_resolucion = models.DateTimeField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Devolucion'
@@ -182,6 +184,7 @@ class Factura(models.Model):
     estado = models.CharField(max_length=20, blank=True, null=True)
     metodo_pago = models.CharField(max_length=50)
     nif_factura = models.CharField(max_length=20, blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Factura'
@@ -193,6 +196,7 @@ class Facturaelectronica(models.Model):
     qr_code = models.BinaryField()
     firma_electronica = models.TextField()
     fecha_registro_aeat = models.DateTimeField()
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'FacturaElectronica'
@@ -214,6 +218,7 @@ class MovimientoInventario(models.Model):
     cantidad = models.ForeignKey('Producto', models.SET_NULL, blank=True, null=True)
     stock_minimo = models.IntegerField(blank=True, null=True)
     fecha_movimiento = models.DateTimeField(auto_now_add=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'MovimientoInventario'
@@ -248,6 +253,7 @@ class Orden(models.Model):
     direccion_envio = models.TextField()
     metodo_pago = models.CharField(max_length=50)
     transaccion_id = models.CharField(max_length=100, blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Orden'
@@ -315,6 +321,7 @@ class Proveedor(models.Model):
     telefono = models.CharField(max_length=15, blank=True, null=True)
     email = models.CharField(max_length=254)
     plazo_pago = models.IntegerField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Proveedor'
@@ -380,6 +387,7 @@ class Reservastock(models.Model):
 class Rol(models.Model):
     nombre = models.CharField(unique=True, max_length=50)
     descripcion = models.TextField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Rol'
@@ -389,6 +397,7 @@ class Sesionusuario(models.Model):
     id = models.CharField(primary_key=True, max_length=32)
     datos = models.TextField()
     fecha_actualizacion = models.DateTimeField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'SesionUsuario'
@@ -398,6 +407,7 @@ class Tipodocumentofiscal(models.Model):
     codigo = models.CharField(unique=True, max_length=10)
     descripcion = models.CharField(max_length=100)
     obligatorio = models.BooleanField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'TipoDocumentoFiscal'
@@ -410,6 +420,7 @@ class Transaccionpago(models.Model):
     estado = models.CharField(max_length=20)
     codigo_transaccion = models.CharField(unique=True, max_length=100, blank=True, null=True)
     fecha = models.DateTimeField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'TransaccionPago'
@@ -430,7 +441,6 @@ class Transportista(models.Model):
 class UserMetadata(models.Model):
     #Crear token para manejar verificacion de cuenta cuando se registre
     user = models.ForeignKey(User, models.DO_NOTHING)
-    token = models.CharField(max_length=100, blank=True, null=True)
     rol = models.ForeignKey(Rol, models.DO_NOTHING, blank=True, null=True)
     telefono = models.CharField(max_length=15, blank=True, null=True)
     direccion = models.TextField(blank=True, null=True)
