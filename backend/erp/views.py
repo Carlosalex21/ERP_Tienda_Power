@@ -1,6 +1,8 @@
 from django.shortcuts import render
 
 from .models import *
+from django.utils import timezone
+from decimal import Decimal
 import csv
 from datetime import datetime
 from django.http.response import JsonResponse, HttpResponse
@@ -172,6 +174,108 @@ class ProductoCreateUpdateDelete(APIView):
 			return JsonResponse({"estado":"eliminado","mensaje":"Producto inactivo"},status=HTTPStatus.OK)
 		except Producto.DoesNotExist:
 			return JsonResponse({"estado":"error","mensaje":"Producto no encontrado"},status=HTTPStatus.NOT_FOUND)
+
+
+# ==============
+# Logica Escanear producto y mostrarlo en el template
+# ==============
+def agg_producto_a_orden(cliente_id, barcode, cantidad=1):
+    # Buscar el producto por código de barras
+    try:
+        producto = Producto.objects.get(codigo_barras=barcode)
+    except Producto.DoesNotExist:
+        return None, "Producto no encontrado para este código."
+    
+    inventario = Inventario.objects.filter(producto=producto, activo=True).first()
+    if not inventario:
+        return None, "No existe registro de inventario para este producto."
+    
+    detalle_existente = Detallefactura.objects.filter(
+         factura__cliente_id = cliente_id,
+         producto = producto,
+         factura__estado = "abierta"
+    ).first()
+
+    cantidad_existente = detalle_existente.cantidad if detalle_existente else 0
+    total_solicitada = cantidad_existente + cantidad
+
+    if total_solicitada > inventario.cantidad:
+         return None, f"La cantidad solicitada ({total_solicitada}) excede el stock disponible ({inventario.cantidad})."
+    
+    # Buscar u obtener la orden activa para ese cliente.
+    orden = Orden.objects.filter(cliente_id=cliente_id, estado="abierta", activo=True).first()
+    if not orden:
+        orden = Orden.objects.create(
+            cliente_id=cliente_id,
+            estado="abierta",
+            fecha_operacion=timezone.now(),
+            metodo_pago="",
+            subtotal=Decimal('0.00'),
+            descuento_total=Decimal('0.00'),
+            iva_total=Decimal('0.00'),
+            total=Decimal('0.00'),
+            direccion_envio="",
+            correlativo="T-" + timezone.now().strftime("%Y%m%d%H%M%S")
+        )
+         
+
+    # Agregar o actualizar el detalle de la orden
+    detalle, created = Detallefactura.objects.get_or_create(
+        factura=orden,
+        producto=producto,
+        defaults={
+            "cantidad": cantidad,
+            "precio_unitario": producto.precio,
+            "descuento": Decimal('0.00'),
+            "subtotal_linea": producto.precio * cantidad,
+            "iva_linea": producto.precio * cantidad * Decimal('0.12'),
+            "total_linea": producto.precio * cantidad + (producto.precio * cantidad * Decimal('0.12')),
+        }
+    )
+    if not created:
+        detalle.cantidad += cantidad
+        detalle.subtotal_linea = detalle.cantidad * detalle.precio_unitario - (detalle.descuento or Decimal('0.00'))
+        detalle.iva_linea = detalle.subtotal_linea * Decimal('0.12')
+        detalle.total_linea = detalle.subtotal_linea + detalle.iva_linea
+        detalle.save()
+    
+    # Recalcular totales de la orden
+    detalles = Detallefactura.objects.filter(factura=orden)
+    orden.subtotal = sum(d.subtotal_linea for d in detalles)
+    orden.iva_total = sum(d.iva_linea for d in detalles)
+    orden.total = sum(d.total_linea for d in detalles)
+    orden.save()
+
+    return orden, None
+
+# Endpoint que utiliza la función anterior:
+class BarcodeScanView(APIView):
+    def post(self, request):
+        cliente_id = request.data.get("cliente_id")
+        barcode = request.data.get("codigo_barras")
+        cantidad = int(request.data.get("cantidad", 1))
+        if not cliente_id or not barcode:
+            return JsonResponse({
+                "estado": "error",
+                "mensaje": "Se requiere cliente_id y código de barras."
+            }, status=HTTPStatus.BAD_REQUEST)
+        
+        orden, error = agg_producto_a_orden(cliente_id, barcode, cantidad)
+        if error:
+            return JsonResponse({"estado": "error", "mensaje": error}, status=HTTPStatus.NOT_FOUND)
+        
+        # Retornar la orden actualizada
+        return JsonResponse({
+            "estado": "success",
+            "mensaje": "Producto agregado/actualizado en la orden.",
+            "orden": {
+                "id": orden.id,
+                "subtotal": str(orden.subtotal),
+                "iva_total": str(orden.iva_total),
+                "total": str(orden.total)
+            }
+        }, status=HTTPStatus.OK)
+
 
 
 # =========================================================
@@ -1259,6 +1363,10 @@ class OrdenCreateUpdateDelete(APIView):
             return JsonResponse({"estado": "error", "mensaje": "Orden no encontrada"}, status=HTTPStatus.NOT_FOUND)
 
 
+
+# ==========
+# Almacen
+# ==========
 
 class AlmacenGet(APIView):
 

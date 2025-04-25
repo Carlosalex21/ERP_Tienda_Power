@@ -205,6 +205,7 @@ class Facturaelectronica(models.Model):
 class Inventario(models.Model): #Listo
     producto = models.ForeignKey('Producto', models.SET_NULL, blank=True, null=True)
     almacen = models.ForeignKey(Almacen, models.SET_NULL, blank=True, null=True,)
+    cantidad = models.PositiveIntegerField(default=0)
     activo = models.BooleanField(default=True)
 
     class Meta:
@@ -247,16 +248,23 @@ class Logactividad(models.Model):
 class Orden(models.Model):
     usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     cliente = models.ForeignKey(Cliente, models.DO_NOTHING, blank=True, null=True)
-    fecha_creacion = models.DateTimeField(blank=True, null=True)
-    estado = models.CharField(max_length=20)
-    total = models.DecimalField(max_digits=10, decimal_places=2)
-    direccion_envio = models.TextField()
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_operacion = models.DateTimeField(blank=True, null=True)
+    estado = models.CharField(max_length=20)  # "abierta", "cerrada", "pagada", etc.
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    descuento_producto = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    descuento_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    iva_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    direccion_envio = models.TextField(blank=True, null=True)
     metodo_pago = models.CharField(max_length=50)
     transaccion_id = models.CharField(max_length=100, blank=True, null=True)
     activo = models.BooleanField(default=True)
+    correlativo = models.CharField(max_length=50, unique=True, blank=True, null=True)
 
     class Meta:
         db_table = 'Orden'
+
 
 
 class Pedidoproveedor(models.Model):

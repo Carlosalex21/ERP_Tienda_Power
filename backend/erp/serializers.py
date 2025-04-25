@@ -407,7 +407,7 @@ class OrdenSerializer(serializers.ModelSerializer):
     
     def validate_estado(self, value):
         # Ejemplo: se definen estados permitidos.
-        allowed_estados = ["pendiente", "procesada", "cancelada"]
+        allowed_estados = ["abierta", "cerrada", "pagada"]
         if value not in allowed_estados:
             raise serializers.ValidationError("Estado no válido.")
         return value
