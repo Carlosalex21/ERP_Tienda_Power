@@ -5,29 +5,45 @@
 #   * Make sure each ForeignKey and OneToOneField has `on_delete` set to the desired behavior
 #   * Remove `managed = False` lines if you wish to allow Django to create, modify, and delete the table
 # Feel free to rename the models, but don't rename db_table values or field names.
-from django.db import models
+from django.db import models, transaction
+from django.conf import settings
 from autoslug import AutoSlugField # type: ignore
+from django.contrib.auth.models import User
 
 
-class Almacen(models.Model):
+class Almacen(models.Model): #Listo
+    ESTADOS_CHOICES = (
+        ('AND', 'Andalucía'),
+        ('ARA', 'Aragón'),
+        ('AST', 'Asturias'),
+        ('BAL', 'Baleares'),
+        ('CAN', 'Canarias'),
+        ('CANT', 'Cantabria'),
+        ('CLM', 'Castilla-La Mancha'),
+        ('CYL', 'Castilla y León'),
+        ('CAT', 'Cataluña'),
+        ('EXT', 'Extremadura'),
+        ('GAL', 'Galicia'),
+        ('RIA', 'La Rioja'),
+        ('MAD', 'Madrid'),
+        ('MUR', 'Murcia'),
+        ('NAV', 'Navarra'),
+        ('PV', 'País Vasco'),
+        ('VAL', 'Valencia'),
+    )
     nombre = models.CharField(max_length=100)
     direccion = models.TextField()
     telefono = models.CharField(max_length=15, blank=True, null=True)
     activo = models.BooleanField(default=True)
+    estado = models.CharField(max_length=4, choices=ESTADOS_CHOICES, default='CYL', blank=True, null=True)
 
     class Meta:
         db_table = 'Almacen'
 
 
-class Atributoproducto(models.Model):
-    nombre = models.CharField(max_length=100)
-
-    class Meta:
-        db_table = 'AtributoProducto'
-
 
 class Carrito(models.Model):
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey("UserMetadata", models.DO_NOTHING, blank=True, null=True)
     producto = models.ForeignKey('Producto', models.DO_NOTHING, blank=True, null=True)
     cantidad = models.IntegerField(blank=True, null=True)
     fecha_actualizacion = models.DateTimeField(blank=True, null=True)
@@ -36,7 +52,7 @@ class Carrito(models.Model):
         db_table = 'Carrito'
 
 
-class Categoriaproducto(models.Model):
+class Categoriaproducto(models.Model): #Listo
     nombre = models.CharField(unique=True, max_length=100)
     slug = AutoSlugField(populate_from="nombre")
     padre = models.ForeignKey('self', models.DO_NOTHING, blank=True, null=True)
@@ -46,7 +62,7 @@ class Categoriaproducto(models.Model):
         db_table = 'CategoriaProducto'
 
 
-class Cliente(models.Model):
+class Cliente(models.Model): #listo
     tipo_documento = models.CharField(max_length=10)
     documento = models.CharField(max_length=20)
     nombre = models.CharField(max_length=100)
@@ -56,25 +72,30 @@ class Cliente(models.Model):
     codigo_postal = models.CharField(max_length=5, blank=True, null=True)
     provincia = models.CharField(max_length=50, blank=True, null=True)
     fecha_registro = models.DateTimeField(blank=True, null=True)
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Cliente'
         unique_together = (('tipo_documento', 'documento'),)
 
+    def __str__(self):
+        return self.nombre
+
 
 class Configuracioniva(models.Model):
+    nombre = models.CharField(max_length=20, blank=True, null=True)
     porcentaje_iva = models.DecimalField(max_digits=5, decimal_places=2)
-    activo = models.BooleanField(blank=True, null=True)
+    activo = models.BooleanField(blank=True, null=True, default=True)
     fecha_creacion = models.DateTimeField(blank=True, null=True)
+    
 
     class Meta:
         db_table = 'ConfiguracionIVA'
 
 
 class Consentimientousuario(models.Model):
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     tipo_consentimiento = models.CharField(max_length=50)
     version = models.TextField()
     fecha_aceptacion = models.DateTimeField(blank=True, null=True)
@@ -116,6 +137,7 @@ class Cupondescuento(models.Model):
 class Detallefactura(models.Model):
     factura = models.ForeignKey('Factura', models.DO_NOTHING, blank=True, null=True)
     producto = models.ForeignKey('Producto', models.DO_NOTHING, blank=True, null=True)
+    variante = models.ForeignKey('Variacionproducto', on_delete=models.CASCADE, null=True, blank=True)
     cantidad = models.IntegerField()
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
     descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
@@ -134,6 +156,7 @@ class Devolucion(models.Model):
     monto_reembolso = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     fecha_solicitud = models.DateTimeField(blank=True, null=True)
     fecha_resolucion = models.DateTimeField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Devolucion'
@@ -166,21 +189,44 @@ class Envio(models.Model):
         db_table = 'Envio'
 
 
+class MetodoPago(models.Model):
+    nombre = models.CharField(max_length=50, unique=True)
+    nro_cuenta = models.CharField(max_length=50, blank=True, null=True)
+    telefono = models.CharField(max_length=20, blank=True, null=True)
+    tipo_metodo = models.CharField(max_length=20, blank=True, null=True)
+    activo = models.BooleanField(default=True)
+    
+    class Meta:
+        db_table = 'MetodoPago'
+
+    def __str__(self):
+        return self.nombre
+
+
+
 class Factura(models.Model):
+    creado_por = models.ForeignKey(
+        'UserMetadata', 
+        on_delete=models.SET_NULL, 
+        null=True, 
+        blank=True, 
+        related_name="facturas_creadas"
+    )
     cliente = models.ForeignKey(Cliente, models.DO_NOTHING, blank=True, null=True)
     orden = models.OneToOneField('Orden', models.DO_NOTHING, blank=True, null=True)
-    fecha_emision = models.DateTimeField(blank=True, null=True)
     fecha_operacion = models.DateTimeField()
-    correlativo = models.CharField(unique=True, max_length=50)
+    correlativo = models.CharField(unique=True, max_length=50, blank=True, null=True)
     subtotal = models.DecimalField(max_digits=10, decimal_places=2)
-    descuento_total = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-    base_imponible = models.DecimalField(max_digits=10, decimal_places=2)
+    descuento_global = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     iva_total = models.DecimalField(max_digits=10, decimal_places=2)
     total = models.DecimalField(max_digits=10, decimal_places=2)
     almacen = models.ForeignKey(Almacen, models.DO_NOTHING, blank=True, null=True)
     estado = models.CharField(max_length=20, blank=True, null=True)
-    metodo_pago = models.CharField(max_length=50)
+    metodo_pago = models.ForeignKey(MetodoPago, models.DO_NOTHING, blank=True, null=True)
     nif_factura = models.CharField(max_length=20, blank=True, null=True)
+    activo = models.BooleanField(default=True)
+    nombre_cliente_pendiente = models.CharField(max_length=100, blank=True, null=True)
+    comentario_pendiente = models.TextField(blank=True, null=True)
 
     class Meta:
         db_table = 'Factura'
@@ -192,15 +238,16 @@ class Facturaelectronica(models.Model):
     qr_code = models.BinaryField()
     firma_electronica = models.TextField()
     fecha_registro_aeat = models.DateTimeField()
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'FacturaElectronica'
 
 
-class Inventario(models.Model):
+class Inventario(models.Model): #Listo
     producto = models.ForeignKey('Producto', models.SET_NULL, blank=True, null=True)
     almacen = models.ForeignKey(Almacen, models.SET_NULL, blank=True, null=True,)
-    stock_minimo = models.IntegerField(blank=True, null=True)
+    cantidad = models.PositiveIntegerField(default=0)
     activo = models.BooleanField(default=True)
 
     class Meta:
@@ -212,7 +259,9 @@ class MovimientoInventario(models.Model):
     inventario = models.ForeignKey(Inventario, on_delete=models.CASCADE)
     tipo_movimiento = models.CharField(choices=[('entrada', 'Entrada'), ('salida', 'Salida')], max_length=10)
     cantidad = models.ForeignKey('Producto', models.SET_NULL, blank=True, null=True)
+    stock_minimo = models.IntegerField(blank=True, null=True)
     fecha_movimiento = models.DateTimeField(auto_now_add=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'MovimientoInventario'
@@ -229,7 +278,7 @@ class Lecturacodigobarras(models.Model):
 
 
 class Logactividad(models.Model):
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     accion = models.CharField(max_length=100)
     detalles = models.TextField(blank=True, null=True)
     fecha = models.DateTimeField(blank=True, null=True)
@@ -238,18 +287,45 @@ class Logactividad(models.Model):
         db_table = 'LogActividad'
 
 
+class ConfiguracionCorrelativo(models.Model):
+    prefijo = models.CharField(max_length=10, default="F-")
+    current_number = models.IntegerField(default=0)
+    number_length = models.IntegerField(default=3)  # Por ejemplo, 3 para mostrar 028, 150, etc.
+
+    class Meta:
+        db_table = 'ConfiguracionCorrelativo'
+
+    def get_next_correlativo(self):
+        # Manejamos la actualización de forma atómica para evitar duplicados
+        with transaction.atomic():
+            # Bloqueamos la fila para evitar condiciones de carrera
+            config = ConfiguracionCorrelativo.objects.select_for_update().get(id=self.id)
+            config.current_number += 1
+            config.save()
+            # Se aplica el formato, rellenando con ceros a la izquierda según la longitud requerida.
+            number_str = str(config.current_number).zfill(config.number_length)
+            return f"{config.prefijo}{number_str}"
+
 class Orden(models.Model):
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     cliente = models.ForeignKey(Cliente, models.DO_NOTHING, blank=True, null=True)
-    fecha_creacion = models.DateTimeField(blank=True, null=True)
-    estado = models.CharField(max_length=20)
-    total = models.DecimalField(max_digits=10, decimal_places=2)
-    direccion_envio = models.TextField()
-    metodo_pago = models.CharField(max_length=50)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_operacion = models.DateTimeField(blank=True, null=True)
+    estado = models.CharField(max_length=20)  # "abierta", "cerrada", "pagada", etc.
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    descuento_producto = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    descuento_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    iva_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    direccion_envio = models.TextField(blank=True, null=True)
+    metodo_pago = models.ForeignKey(MetodoPago, models.DO_NOTHING, blank=True, null=True)
     transaccion_id = models.CharField(max_length=100, blank=True, null=True)
+    activo = models.BooleanField(default=True)
+    correlativo = models.CharField(max_length=50, unique=True, blank=True, null=True)
 
     class Meta:
         db_table = 'Orden'
+
 
 
 class Pedidoproveedor(models.Model):
@@ -263,22 +339,47 @@ class Pedidoproveedor(models.Model):
         db_table = 'PedidoProveedor'
 
 
-class Producto(models.Model):
+class Atributo(models.Model):
+    nombre = models.CharField(max_length=80)
+
+class ValorAtributo(models.Model):
+    atributo = models.ForeignKey(Atributo, on_delete=models.CASCADE)
+    valor = models.CharField(max_length=80) 
+
+class Producto(models.Model): #Listo
     nombre = models.CharField(max_length=150)
     descripcion = models.TextField(blank=True, null=True)
-    precio = models.DecimalField(max_digits=10, decimal_places=2)
+    precio = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     cantidad = models.IntegerField(blank=True, null=True)
-    almacen = models.ForeignKey(Almacen, on_delete=models.SET_NULL, blank=True, null=True, default=1)
-    codigo_barras = models.CharField(unique=True, max_length=50)
+    almacen = models.ForeignKey(Almacen, on_delete=models.SET_NULL, blank=True, null=True)
+    codigo_barras = models.CharField(unique=True, max_length=50, blank=True, null=True)
     disponible_online = models.BooleanField(blank=True, null=True)
     descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
     configuracion_iva = models.ForeignKey(Configuracioniva, models.DO_NOTHING, blank=True, null=True)
     slug = models.CharField(unique=True, max_length=100, blank=True, null=True)
     peso = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     dimensiones = models.CharField(max_length=50, blank=True, null=True)
+    categoria = models.ForeignKey(Categoriaproducto, on_delete=models.SET_NULL,blank=True, null=True)
+    # Campo para la imagen; upload_to indica la subcarpeta dentro de MEDIA_ROOT donde se guardará
+    imagen = models.ImageField(upload_to='productos/', blank=True, null=True)
+    TIPO_CHOICES = (
+        ('simple', 'Simple'),
+        ('variable', 'Variable'),
+    )
+    tipo = models.CharField(max_length=20, choices=TIPO_CHOICES, default='simple')
 
     #Campo de eliminacion logica
     activo = models.BooleanField(default=True)
+
+    def precio_con_iva(self):
+        """
+        Calcula el precio final sumando el IVA según la configuración.
+        Por ejemplo, si la tasa es 10% y el precio base es 50, devuelve 55.
+        """
+        if self.configuracion_iva and self.precio is not None:
+            iva = self.configuracion_iva.porcentaje_iva  # Suponiendo que este campo almacena la tasa, ej. 10
+            return self.precio + (self.precio * (iva / 100))
+        return self.precio
 
     class Meta:
         db_table = 'Producto'
@@ -313,6 +414,7 @@ class Proveedor(models.Model):
     telefono = models.CharField(max_length=15, blank=True, null=True)
     email = models.CharField(max_length=254)
     plazo_pago = models.IntegerField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Proveedor'
@@ -354,7 +456,7 @@ class Reporteventa(models.Model):
 
 class Resenaproducto(models.Model):
     producto = models.ForeignKey(Producto, models.DO_NOTHING, blank=True, null=True)
-    usuario = models.ForeignKey('Usuario', models.DO_NOTHING, blank=True, null=True)
+    usuario = models.ForeignKey('UserMetadata', models.DO_NOTHING, blank=True, null=True)
     calificacion = models.IntegerField()
     comentario = models.TextField(blank=True, null=True)
     fecha_creacion = models.DateTimeField(blank=True, null=True)
@@ -378,15 +480,20 @@ class Reservastock(models.Model):
 class Rol(models.Model):
     nombre = models.CharField(unique=True, max_length=50)
     descripcion = models.TextField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'Rol'
+
+    def __str__(self):
+        return self.nombre
 
 
 class Sesionusuario(models.Model):
     id = models.CharField(primary_key=True, max_length=32)
     datos = models.TextField()
     fecha_actualizacion = models.DateTimeField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'SesionUsuario'
@@ -396,18 +503,23 @@ class Tipodocumentofiscal(models.Model):
     codigo = models.CharField(unique=True, max_length=10)
     descripcion = models.CharField(max_length=100)
     obligatorio = models.BooleanField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'TipoDocumentoFiscal'
+
+    def __str__(self):
+        return self.codigo
 
 
 class Transaccionpago(models.Model):
     orden = models.ForeignKey(Orden, models.DO_NOTHING, blank=True, null=True)
     monto = models.DecimalField(max_digits=10, decimal_places=2)
-    metodo_pago = models.CharField(max_length=50)
+    metodo_pago = models.ForeignKey(MetodoPago, models.DO_NOTHING, blank=True, null=True)
     estado = models.CharField(max_length=20)
     codigo_transaccion = models.CharField(unique=True, max_length=100, blank=True, null=True)
     fecha = models.DateTimeField(blank=True, null=True)
+    activo = models.BooleanField(default=True)
 
     class Meta:
         db_table = 'TransaccionPago'
@@ -425,32 +537,50 @@ class Transportista(models.Model):
         db_table = 'Transportista'
 
 
-class Usuario(models.Model):
-    username = models.CharField(unique=True, max_length=150)
-    password = models.CharField(max_length=128)
-    first_name = models.CharField(max_length=30, blank=True, null=True)
-    last_name = models.CharField(max_length=150, blank=True, null=True)
-    email = models.CharField(unique=True, max_length=254, blank=True, null=True)
-    is_staff = models.BooleanField()
-    is_active = models.BooleanField()
-    date_joined = models.DateTimeField()
-    rol = models.ForeignKey(Rol, models.DO_NOTHING, blank=True, null=True)
+class UserMetadata(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE, related_name="metadata")
+    rol = models.ForeignKey('Rol', models.DO_NOTHING, blank=True, null=True)
     telefono = models.CharField(max_length=15, blank=True, null=True)
     direccion = models.TextField(blank=True, null=True)
     ultimo_login = models.DateTimeField(blank=True, null=True)
-    avatar_url = models.CharField(max_length=255, blank=True, null=True)
-    provider = models.CharField(max_length=50, blank=True, null=True)
+    
+    # Datos personales
+    nombre = models.CharField(max_length=100, blank=True, null=True)
+    apellido = models.CharField(max_length=100, default="N/A")
+    tipo_documento = models.ForeignKey('Tipodocumentofiscal', models.SET_NULL, null=True, blank=True)
+    numero_documento = models.CharField(max_length=30, blank=True, null=True)
+    correo = models.EmailField(max_length=254, unique=True, blank=True, null=True)
+    
+    # Estado y seguridad
+    es_activo = models.BooleanField(default=True)
+    verificado = models.BooleanField(default=False)
+    token_verificacion = models.CharField(max_length=64, blank=True, null=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True, null=True, blank=True)
+    fecha_modificacion = models.DateTimeField(auto_now=True)
 
     class Meta:
-        db_table = 'Usuario'
+        db_table = 'UserMetadata'
+
+    def __str__(self):
+        return f"{self.nombre} {self.apellido} ({self.user.username})"
+
+
+def variant_image_upload_to(instance, filename):
+    product_slug = instance.producto.slug if instance.producto and instance.producto.slug else "default"
+    # Forma la ruta: productos/<slug>/variaciones/<filename>
+    return f"productos/{product_slug}/variaciones/{filename}"
 
 
 class Variacionproducto(models.Model):
     producto = models.ForeignKey(Producto, models.DO_NOTHING, blank=True, null=True)
-    atributo = models.ForeignKey(Atributoproducto, models.DO_NOTHING, blank=True, null=True)
-    valor = models.CharField(max_length=100)
+    atributos = models.ManyToManyField(ValorAtributo)
+    nombre = models.CharField(max_length=80)
     sku = models.CharField(unique=True, max_length=50, blank=True, null=True)
-    stock = models.IntegerField(blank=True, null=True)
+    precio = models.DecimalField(max_digits=10, decimal_places=2, null=True)
+    cantidad = models.IntegerField(blank=True, null=True)
+    codigo_barras = models.CharField(max_length=50, unique=True, null=True)
+    # Campo para la imagen; upload_to indica la subcarpeta dentro de MEDIA_ROOT donde se guardará
+    imagen = models.ImageField(upload_to=variant_image_upload_to, blank=True, null=True)
 
     class Meta:
         db_table = 'VariacionProducto'
