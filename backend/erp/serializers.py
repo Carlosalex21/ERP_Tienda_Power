@@ -103,10 +103,19 @@ class UserMetadataCreateSerializer(serializers.ModelSerializer):
         # El campo correo puede o no ir en metadatos según tu modelo
         return UserMetadata.objects.create(**validated_data)
 
-class ConfiguracionCorrelativoSerializer(serializers.ModelSerializer):
+class ConfiguracionCorrelativoReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = ConfiguracionCorrelativo
         fields = ['prefijo', 'current_number', 'number_length']
+
+# 2. Serializer para ACTUALIZAR la configuración (requiere contraseña)
+class ConfiguracionCorrelativoWriteSerializer(serializers.ModelSerializer):
+    # El campo de contraseña es solo para escribir y es obligatorio para guardar.
+    password = serializers.CharField(write_only=True, required=True)
+
+    class Meta:
+        model = ConfiguracionCorrelativo
+        fields = ['prefijo', 'current_number', 'number_length', 'password']
 
 
 
@@ -317,56 +326,62 @@ class ValorAtributoSerializer(serializers.ModelSerializer):
         fields = ['id', 'atributo', 'atributo_id', 'valor']
 
 class VariacionproductoSerializer(serializers.ModelSerializer):
-    nombre = serializers.CharField(required=False, allow_blank=True, allow_null=True)
+    """
+    Serializer completo y corregido para Variantes.
+    Funciona en conjunto con el nuevo ProductoSerializer.
+    """
     atributos = ValorAtributoSerializer(many=True, read_only=True)
     atributos_id = serializers.PrimaryKeyRelatedField(
         queryset=ValorAtributo.objects.all(), source='atributos', many=True, write_only=True, required=False
     )
     imagen = serializers.ImageField(use_url=True, required=False, allow_null=True)
 
+    # --- CAMBIO 1: AÑADIMOS EL CAMPO CALCULADO ---
+    base_imponible = serializers.SerializerMethodField()
+
     class Meta:
         model = Variacionproducto
+        # --- CAMBIO 2: AÑADIMOS 'base_imponible' A LA LISTA DE CAMPOS ---
         fields = [
-            'id', 'producto', 'nombre','atributos', 'atributos_id', 'sku',
-            'precio', 'cantidad', 'codigo_barras', 'imagen'
+            'id', 'nombre', 'atributos', 'atributos_id', 'sku',
+            'precio', 'base_imponible', 'cantidad', 'codigo_barras', 'imagen'
         ]
         extra_kwargs = {
+            'id': {'read_only': False, 'required': False},
             'sku': {'required': False, 'allow_null': True},
             'precio': {'allow_null': True},
             'cantidad': {'allow_null': True},
-            'codigo_barras': {'allow_null': True},
-            'imagen': {'allow_null': True},
-            'producto': {'required': True},
+            'codigo_barras': {'allow_null': True, 'allow_blank': True},
             'nombre': {'required': False, 'allow_blank': True, 'allow_null': True}
         }
 
-    def get_total_stock(self, obj):
-        qs = Variacionproducto.objects.filter(nombre=obj.nombre)
-        result = qs.aggregate(total=Sum('cantidad'))
-        return result['total'] or 0
+    # --- CAMBIO 3: AÑADIMOS EL MÉTODO PARA CALCULAR EL CAMPO ---
+    def get_base_imponible(self, obj):
+        """
+        Calcula la base imponible de la variante a partir de su precio final (PVP),
+        utilizando la configuración de IVA de su producto padre.
+        """
+        # obj es la instancia de Variacionproducto
+        if obj.precio and obj.producto and obj.producto.configuracion_iva:
+            tasa_iva = obj.producto.configuracion_iva.porcentaje_iva
+            if tasa_iva > 0:
+                # Cálculo inverso: Base = Total / (1 + Tasa)
+                base = obj.precio / (Decimal("1") + tasa_iva / Decimal("100"))
+                return round(base, 2)
+        # Si no se puede calcular, devuelve el precio tal cual
+        return obj.precio
 
-
+    # SE MANTIENE TODA TU LÓGICA DE VALIDACIÓN, QUE ES CORRECTA Y VALIOSA
     def validate(self, data):
+        producto = self.context.get('producto', getattr(self.instance, 'producto', None))
         nombre = data.get("nombre")
-        producto = data.get("producto") or getattr(self.instance, "producto", None)
-        if not self.instance:
-            if nombre and producto and Variacionproducto.objects.filter(nombre=nombre, producto=producto).exists():
-                raise serializers.ValidationError({
-                    "nombre": "Ya existe una variante con este nombre para este producto."
-                })
-        else:
-            nuevo_nombre = data.get("nombre", self.instance.nombre)
-            if nuevo_nombre != self.instance.nombre:
-                if Variacionproducto.objects.filter(nombre=nuevo_nombre, producto=producto).exclude(id=self.instance.id).exists():
-                    raise serializers.ValidationError({
-                        "nombre": "Ya existe una variante con este nombre para este producto."
-                    })
-
-        if "precio" in data and data["precio"] is not None and data["precio"] < 0:
-            raise serializers.ValidationError({"precio": "El precio no puede ser negativo."})
-
-        if "cantidad" in data and data["cantidad"] is not None and data["cantidad"] < 0:
-            raise serializers.ValidationError({"cantidad": "La cantidad no puede ser negativa."})
+        
+        if nombre and producto:
+            qs = Variacionproducto.objects.filter(nombre=nombre, producto=producto)
+            if self.instance:
+                qs = qs.exclude(id=self.instance.id)
+            if qs.exists():
+                raise serializers.ValidationError({"nombre": "Ya existe una variante con este nombre para este producto."})
 
         sku = data.get("sku")
         if sku:
@@ -384,37 +399,18 @@ class VariacionproductoSerializer(serializers.ModelSerializer):
             if qs.exists():
                 raise serializers.ValidationError({"codigo_barras": "El código de barras ya existe en otra variante."})
 
+        if "precio" in data and data.get("precio") is not None and data["precio"] < 0:
+            raise serializers.ValidationError({"precio": "El precio no puede ser negativo."})
+
+        if "cantidad" in data and data.get("cantidad") is not None and data["cantidad"] < 0:
+            raise serializers.ValidationError({"cantidad": "La cantidad no puede ser negativa."})
+
         return data
 
     def validate_nombre(self, value):
         if value is None:
             return ""
         return value.strip()
-
-    def create(self, validated_data):
-        atributos = validated_data.pop('atributos', [])
-        if not validated_data.get('nombre'):
-            validated_data['nombre'] = 'Variante'
-        if not validated_data.get('sku'):
-            validated_data['sku'] = slugify(validated_data['nombre'])
-        variacion = Variacionproducto.objects.create(**validated_data)
-        if atributos:
-            variacion.atributos.set(atributos)
-        return variacion
-
-    def update(self, instance, validated_data):
-        atributos = validated_data.pop('atributos', None)
-        nombre = validated_data.get('nombre')
-        if (not nombre or nombre.strip() == "") and atributos:
-            valores = [v.valor for v in atributos]
-            validated_data['nombre'] = f"{instance.producto.nombre} {' '.join(valores)}"
-        if not validated_data.get("sku"):
-            validated_data["sku"] = slugify(validated_data['nombre'])
-        instance = super().update(instance, validated_data)
-        if atributos is not None:
-            instance.atributos.set(atributos)
-        return instance
-
 
 class ConfiguracionivaSerializer(serializers.ModelSerializer):
     class Meta:
@@ -489,23 +485,19 @@ class DetallefacturaSerializer(serializers.ModelSerializer):
 
 #Reportes Serializer
 class FacturaReporteSerializer(serializers.ModelSerializer):
-    """
-    Serializer para mostrar una lista detallada de facturas, incluyendo
-    el nombre del cliente en lugar de solo su ID.
-    """
-    # Usamos StringRelatedField para obtener el 'nombre' del cliente directamente.
     cliente = serializers.StringRelatedField()
     almacen = serializers.StringRelatedField()
     metodo_pago = serializers.StringRelatedField()
+    creado_por_nombre = serializers.CharField(source='usuario.username', read_only=True, default='N/A')
 
     class Meta:
         model = Factura
-        # Define los campos que quieres ver en tu tabla de reporte detallado
         fields = [
             'id',
             'correlativo',
             'fecha_operacion',
             'cliente',
+            'creado_por_nombre',
             'estado',
             'subtotal',
             'descuento_global',
@@ -514,6 +506,7 @@ class FacturaReporteSerializer(serializers.ModelSerializer):
             'metodo_pago',
             'almacen',
         ]
+
 
 class DetalleFacturaReporteSerializer(serializers.ModelSerializer):
     """Serializer para los productos dentro de una factura."""
@@ -667,162 +660,93 @@ class OrdenSerializer(serializers.ModelSerializer):
 
 
 class ProductoSerializer(serializers.ModelSerializer):
+    variantes = VariacionproductoSerializer(many=True, required=False)
     categoria_nombre = serializers.CharField(source="categoria.nombre", read_only=True)
     almacen_nombre = serializers.CharField(source="almacen.nombre", read_only=True)
-    imagen = serializers.ImageField(use_url=True, required=False, allow_null=True)
-    categoria = serializers.PrimaryKeyRelatedField(queryset=Categoriaproducto.objects.all())
-    almacen = serializers.PrimaryKeyRelatedField(queryset=Almacen.objects.all())
-    configuracion_iva = serializers.PrimaryKeyRelatedField(queryset=Configuracioniva.objects.all())
-    precio_con_iva = serializers.DecimalField(max_digits=12, decimal_places=2, read_only=True)
+    
+    # CAMBIO 1: Reemplazamos 'precio_con_iva' por 'base_imponible'
+    base_imponible = serializers.SerializerMethodField()
 
     class Meta:
         model = Producto
-        fields = "__all__"
-        extra_kwargs = {
-            'precio': {'required': False, 'allow_null': True},
-            'cantidad': {'required': False, 'allow_null': True},
-            'codigo_barras': {'required': False, 'allow_blank': True, 'allow_null': True},
-            'slug': {'read_only': True, 'required': False},
-        }
+        # CAMBIO 2: Listamos los campos explícitamente para claridad
+        fields = [
+            'id', 'nombre', 'descripcion', 'precio', 'base_imponible', 'cantidad',
+            'almacen', 'almacen_nombre', 'codigo_barras', 'disponible_online',
+            'descuento', 'configuracion_iva', 'slug', 'peso', 'dimensiones',
+            'categoria', 'categoria_nombre', 'imagen', 'tipo', 'activo', 'variantes'
+        ]
 
-    def validate_cantidad(self, value):
-        if value is not None and value < 0:
-            raise serializers.ValidationError("La cantidad del producto no puede ser negativa.")
-        return value
+    def get_base_imponible(self, obj):
+        """
+        Obtiene la base imponible usando la propiedad que definimos en el modelo.
+        Esto mantiene la lógica de negocio en el modelo, que es donde debe estar.
+        """
+        return obj.base_imponible
+
+    # Mantenemos tus métodos para manejar los datos del formulario, ya que son necesarios
+    # para procesar el formato 'variantes[0][campo]'.
+    def _extraer_variantes_data(self, initial_data):
+        variantes_dict = {}
+        for key, value in initial_data.items():
+            match = re.match(r'variantes\[(\d+)\]\[(\w+)\]', key)
+            if match:
+                idx, campo = int(match.group(1)), match.group(2)
+                if idx not in variantes_dict:
+                    variantes_dict[idx] = {}
+                variantes_dict[idx][campo] = value[0] if isinstance(value, list) and len(value) == 1 else value
+        return [variantes_dict[i] for i in sorted(variantes_dict.keys())]
 
     def create(self, validated_data):
-        # LÓGICA ORIGINAL: SOLO UNA VARIANTE PARA PRODUCTO VARIABLE
-        variantes_data_raw = self.initial_data.get('variantes', None)
-
-        print(f"--- DEBUG: ProductoSerializer.create ---")
-        print(f"Raw variantes_data_raw: {variantes_data_raw} (tipo: {type(variantes_data_raw)})")
-
-        # Crear el producto principal primero
+        variantes_data = self._extraer_variantes_data(self.initial_data)
         validated_data.pop('variantes', None)
         producto = Producto.objects.create(**validated_data)
-        request = self.context.get("request")
-
-        if validated_data.get('tipo') == 'variable':
-            # Solo admite UNA variante por producto variable
-            if variantes_data_raw:
-                import json
-                if isinstance(variantes_data_raw, str):
-                    variantes_data_list = json.loads(variantes_data_raw)
-                elif isinstance(variantes_data_raw, list):
-                    variantes_data_list = variantes_data_raw
-                else:
-                    variantes_data_list = []
-
-                if variantes_data_list:
-                    # Tomamos SOLO la primera variante del array
-                    variante_dict = variantes_data_list[0]
-                    serializer_data = {
-                        'producto': producto.id,
-                        'atributos_id': [variante_dict.get('atributos_id', [None])[0]],
-                        'sku': variante_dict.get('sku'),
-                        'precio': variante_dict.get('precio'),
-                        'cantidad': variante_dict.get('cantidad'),
-                        'codigo_barras': variante_dict.get('codigo_barras'),
-                        'nombre': variante_dict.get('nombre'),
-                    }
-
-                    if request and hasattr(request, 'FILES'):
-                        if 'variantes[0][imagen]' in request.FILES:
-                            serializer_data['imagen'] = request.FILES['variantes[0][imagen]']
-
-                    print('serializer_data:', serializer_data)
-                    
-                    serializer_variante = VariacionproductoSerializer(data=serializer_data, context=self.context)
-                    serializer_variante.is_valid(raise_exception=True)
-                    serializer_variante.save()
-        producto.refresh_from_db()
+        
+        if variantes_data:
+            for variante_data in variantes_data:
+                atributos_ids = variante_data.pop('atributos_id', [])
+                variante = Variacionproducto.objects.create(producto=producto, **variante_data)
+                if atributos_ids:
+                    variante.atributos.set(atributos_ids)
         return producto
 
     def update(self, instance, validated_data):
+        variantes_data = self._extraer_variantes_data(self.initial_data)
         validated_data.pop('variantes', None)
-        nuevo_nombre = validated_data.get("nombre", instance.nombre)
-        if nuevo_nombre != instance.nombre:
-            nuevo_slug = slugify(nuevo_nombre)
-            if Producto.objects.filter(slug=nuevo_slug).exclude(id=instance.id).exists():
-                raise serializers.ValidationError({"slug": "Ya existe un producto con este slug."})
-            validated_data["slug"] = nuevo_slug
-
-        imagen = validated_data.get("imagen", None)
-        if not imagen:
-            validated_data["imagen"] = instance.imagen
-
-        validated_data["descuento"] = validated_data.get("descuento", instance.descuento)
         instance = super().update(instance, validated_data)
+
+        if variantes_data:
+            variantes_existentes_map = {v.id: v for v in instance.variacionproducto_set.all()}
+            for item_data in variantes_data:
+                item_id = item_data.get('id')
+                if item_id:
+                    item_id = int(item_id)
+
+                if item_id and item_id in variantes_existentes_map:
+                    variante = variantes_existentes_map.pop(item_id)
+                    atributos_ids = item_data.pop('atributos_id', None)
+                    for attr, value in item_data.items():
+                        setattr(variante, attr, value)
+                    variante.save()
+                    if atributos_ids is not None:
+                        variante.atributos.set(atributos_ids)
+                else:
+                    atributos_ids = item_data.pop('atributos_id', [])
+                    item_data.pop('id', None)
+                    variante = Variacionproducto.objects.create(producto=instance, **item_data)
+                    if atributos_ids:
+                        variante.atributos.set(atributos_ids)
+            
+            if variantes_existentes_map:
+                Variacionproducto.objects.filter(id__in=variantes_existentes_map.keys()).delete()
         return instance
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
+        # Usamos la relación inversa correcta que definimos en el modelo
         variantes_qs = instance.variacionproducto_set.all()
         data['variantes'] = VariacionproductoSerializer(variantes_qs, many=True, context=self.context).data
         return data
-
-    def validate_nombre(self, value):
-        if value is None:
-            return ""
-        return value.strip()
-
-    def validate_categoria(self, value):
-        if not value:
-            raise serializers.ValidationError("El producto debe estar asociado a una categoría válida.")
-        return value
-
-    def validate_almacen(self, value):
-        if not value:
-            raise serializers.ValidationError("El producto debe estar asociado a un almacén válido.")
-        return value
-
-    def validate(self, data):
-        tipo = data.get("tipo", getattr(self.instance, "tipo", None))
-        is_creating = not self.instance
-
-        required_fields_general = ["nombre", "descripcion", "categoria", "almacen", "peso"]
-        for campo in required_fields_general:
-            if (is_creating and not data.get(campo)) or \
-               (campo in data and not data.get(campo) and data.get(campo) is not None and data.get(campo) != ""):
-                if not (campo == "nombre" and not is_creating and campo not in data):
-                    raise serializers.ValidationError({campo: f"El campo '{campo}' no puede estar vacío."})
-
-        if "descuento" in data:
-            if data["descuento"] in [None, ""]:
-                data["descuento"] = 0.0
-            else:
-                try:
-                    descuento_val = float(data["descuento"])
-                    if descuento_val < 0:
-                        raise serializers.ValidationError({"descuento": "El descuento no puede ser negativo."})
-                    data["descuento"] = descuento_val
-                except (ValueError, TypeError):
-                    raise serializers.ValidationError({"descuento": "Se requiere un número válido para el descuento."})
-
-        if tipo == "simple":
-            if data.get("precio") is None or data.get("precio") <= 0:
-                raise serializers.ValidationError({"precio": "Para producto simple, el precio debe ser mayor a 0."})
-            if data.get("cantidad") is None or data.get("cantidad") < 0:
-                raise serializers.ValidationError({"cantidad": "Para producto simple, la cantidad debe ser un número mayor o igual a 0."})
-            if not data.get("codigo_barras"):
-                raise serializers.ValidationError({"codigo_barras": "El código de barras es obligatorio para producto simple."})
-
-            if is_creating and not data.get("imagen"):
-                 raise serializers.ValidationError({"imagen": "Debe subir una imagen para el producto simple."})
-
-        elif tipo == "variable":
-            data['precio'] = None
-            data['cantidad'] = None
-            data['codigo_barras'] = None
-            variantes_presentes = 'variantes' in self.initial_data
-            if not variantes_presentes:
-                raise serializers.ValidationError({"variantes": "Para un producto variable, debe agregar al menos una variante."})
-
-        elif tipo is None and is_creating:
-             raise serializers.ValidationError({"tipo": "Debe especificar el tipo de producto (simple o variable)."})
-
-        return data
-
 
 
 class AlmacenSerializer(serializers.ModelSerializer):

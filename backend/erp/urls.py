@@ -5,6 +5,8 @@ from rest_framework_simplejwt.views import (
     TokenVerifyView)
 
 urlpatterns = [
+    #Dashboard
+    path('api/dashboard/', DashboardDataView.as_view(), name='dashboard-data'),
     #Login y usuarios
     path('api/usuarios/', UserMetadataListCreateView.as_view(), name='usuarios-list-create'),
     path('api/usuarios/<int:pk>/', UserMetadataDetailView.as_view(), name='usuarios-detail'),
@@ -96,6 +98,8 @@ urlpatterns = [
     path("api/factura/descuento-global", ActualizarDescuentoGlobalView.as_view()),
     #Logica barcode-scan
     path("api/barcode-scan",BarcodeScanView.as_view()),
+    #Configuracion correlativo
+    path("api/configuracion/correlativo/", ConfiguracionCorrelativoManageView.as_view()),
     #Reportes
     path('api/reportes/clientes/', ReporteclienteView.as_view(), name='reporte-clientes'),
     path('api/reportes/inventario/', ReporteinventarioView.as_view(), name='reporte-inventario'),

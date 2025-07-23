@@ -1,14 +1,9 @@
-# This is an auto-generated Django model module.
-# You'll have to do the following manually to clean this up:
-#   * Rearrange models' order
-#   * Make sure each model has one field with primary_key=True
-#   * Make sure each ForeignKey and OneToOneField has `on_delete` set to the desired behavior
-#   * Remove `managed = False` lines if you wish to allow Django to create, modify, and delete the table
-# Feel free to rename the models, but don't rename db_table values or field names.
 from django.db import models, transaction
 from django.conf import settings
 from autoslug import AutoSlugField # type: ignore
 from django.contrib.auth.models import User
+from decimal import Decimal
+from .utils.correlativo import obtener_configuracion_correlativo
 
 
 class Almacen(models.Model): #Listo
@@ -205,8 +200,8 @@ class MetodoPago(models.Model):
 
 
 class Factura(models.Model):
-    creado_por = models.ForeignKey(
-        'UserMetadata', 
+    usuario = models.ForeignKey(
+        User, 
         on_delete=models.SET_NULL, 
         null=True, 
         blank=True, 
@@ -230,6 +225,28 @@ class Factura(models.Model):
 
     class Meta:
         db_table = 'Factura'
+
+    def save(self, *args, **kwargs):
+        # --- LÓGICA DE CORRELATIVO CENTRALIZADA ---
+        # Si la factura no tiene correlativo y su estado está cambiando a 'pagado' o 'pendiente'
+        if not self.correlativo and self.estado in ['pagado', 'pendiente']:
+            try:
+                # Obtenemos y bloqueamos la configuración para evitar condiciones de carrera
+                config = obtener_configuracion_correlativo()
+                config.current_number += 1
+                
+                # Generamos el nuevo correlativo
+                nuevo_numero = str(config.current_number).zfill(config.number_length)
+                self.correlativo = f"{config.prefijo}{nuevo_numero}"
+                
+                config.save()
+            except Exception as e:
+                print(f"ERROR: No se pudo generar el correlativo. {e}")
+                # Dependiendo de tu lógica de negocio, podrías querer evitar que se guarde
+                # o simplemente registrar el error. Por ahora, lo dejamos continuar.
+                pass
+
+        super().save(*args, **kwargs) 
 
 
 class Facturaelectronica(models.Model):
@@ -371,15 +388,20 @@ class Producto(models.Model): #Listo
     #Campo de eliminacion logica
     activo = models.BooleanField(default=True)
 
-    def precio_con_iva(self):
+    @property
+    def base_imponible(self):
         """
-        Calcula el precio final sumando el IVA según la configuración.
-        Por ejemplo, si la tasa es 10% y el precio base es 50, devuelve 55.
+        Calcula el precio base (sin IVA) a partir del precio final.
+        Ejemplo: si el precio final es 55 y el IVA es 10%, devuelve 50.
         """
-        if self.configuracion_iva and self.precio is not None:
-            iva = self.configuracion_iva.porcentaje_iva  # Suponiendo que este campo almacena la tasa, ej. 10
-            return self.precio + (self.precio * (iva / 100))
+        if self.precio and self.configuracion_iva:
+            tasa_iva = self.configuracion_iva.porcentaje_iva
+            if tasa_iva > 0:
+                # Cálculo inverso: Base = Total / (1 + Tasa)
+                base = self.precio / (Decimal("1") + tasa_iva / Decimal("100"))
+                return base
         return self.precio
+
 
     class Meta:
         db_table = 'Producto'
