@@ -1,0 +1,20 @@
+@page {
+    size: 58mm auto; /* Ancho 58mm, altura automática */
+    margin: 2mm;
+}
+
+body {
+    font-size: 8pt; /* Fuente más pequeña para que quepa */
+}
+
+.producto {
+    width: 40%;
+}
+
+.descuento-linea {
+    font-size: 7pt;
+}
+
+.total-final {
+    font-size: 10pt;
+}

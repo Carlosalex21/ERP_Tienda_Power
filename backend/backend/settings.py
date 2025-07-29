@@ -42,23 +42,35 @@ INSTALLED_APPS = [
     "django.contrib.messages",
     "django.contrib.staticfiles",
     "rest_framework",
+    "rest_framework.authtoken",
     "corsheaders",
-    # "rest.framework.authtoken",
 ] + APPS
 
 MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     #"django.middleware.csrf.CsrfViewMiddleware", temporalmente comentado
     "django.contrib.auth.middleware.AuthenticationMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
-    "corsheaders.middleware.CorsMiddleware",
 ]
 
 CORS_ALLOWED_ORIGINS = [
     "http://localhost:8080",
+    "http://127.0.0.1:8080",
+]
+
+CORS_ALLOW_CREDENTIALS = True
+
+CORS_ALLOW_HEADERS = [
+    "accept",
+    "authorization",
+    "content-type",
+    "user-agent",
+    "x-csrftoken",
+    "x-requested-with",
 ]
 
 CSRF_TRUSTED_ORIGINS = [
@@ -148,3 +160,13 @@ MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
 
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
+
+#Configuracion de Woocomerce para la conexion de inventarion con sistema 
+WOOCOMMERCE_CONFIG = {
+    "url": "https://powerexcelencia.es",  # <-- REEMPLAZA CON LA URL DE TU TIENDA
+    "consumer_key": "ck_00ba7786e6f9a3a9065929eeff33a91504b11719",
+    "consumer_secret": "cs_8293ffca8b59a8b8cc8494af8e78bc2de40356161",
+    "wp_api": True,
+    "version": "wc/v3",
+    "timeout": 20 
+}

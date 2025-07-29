@@ -5,31 +5,45 @@ from rest_framework_simplejwt.views import (
     TokenVerifyView)
 
 urlpatterns = [
+    #Dashboard
+    path('api/dashboard/', DashboardDataView.as_view(), name='dashboard-data'),
     #Login y usuarios
-    path('api/usuarios/', UserMetadataListCreateView.as_view(), name='usuarios-list-create'),
-    path('api/usuarios/<int:pk>/', UserMetadataDetailView.as_view(), name='usuarios-detail'),
+    path('api/usuarios', UserMetadataListCreateView.as_view(), name='usuarios-list-create'),
+    path('api/usuarios/<int:pk>', UserMetadataDetailView.as_view(), name='usuarios-detail'),
     path('api/tipos-documento/', TipodocumentofiscalList.as_view(), name='tipos-documentos'),
     path('api/roles/', RolList.as_view(), name='roles'),
     path('login/', MyTokenObtainPairView.as_view(), name='token_obtain_pair'),
     path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
     path('token/verify/', TokenVerifyView.as_view(), name='token_verify'),
+    #Empleados
+    path("api/usermetadata", UserMetadataListCreateView.as_view()),
+    path("api/usermetadata/<int:id>", UserMetadataDetailView.as_view()),
+    # --- RUTAS PARA ASISTENCIA ---
+    path("api/auth/users/me/", UserMeView.as_view(), name='user-me'),
+    path("api/hrm/attendance-summary/", AttendanceSummaryView.as_view(), name='attendance-summary'),
+    path("api/hrm/clock-in/", ClockInView.as_view(), name='clock-in'),
+    path("api/hrm/clock-out/", ClockOutView.as_view(), name='clock-out'),
+    path("api/hrm/break/", BreakView.as_view(), name='break'),
+    # --- NUEVAS RUTAS DE GESTIÓN PARA ADMINS ---
+    path('api/hrm/horarios/<int:pk>/', HorarioDetailView.as_view(), name='horario-detail'),
+    path('api/hrm/horarios/', HorarioDetailView.as_view(), name='horario-create'), # Puedes necesitar esto si no hay ningun horario creado todavia
+    # Para Días Festivos
+    path('api/hrm/dias-festivos/', DiaFestivoListView.as_view(), name='dias-festivos-list'),
+    path('api/hrm/dias-festivos/<int:pk>/', DiaFestivoDetailView.as_view(), name='dias-festivos-detail'),
     #Productos
     path("api/producto", ProductoList.as_view()),
     path("api/producto/<int:id>/", ProductoGet.as_view()),
     path("api/producto/crear", ProductoCreateUpdateDelete.as_view()),
     path("api/producto/editar/<int:id>", ProductoCreateUpdateDelete.as_view()),
-    path("api/producto/eliminar/<int:id>", ProductoCreateUpdateDelete.as_view()),
+    path("api/producto/eliminar/<int:pk>", ProductoCreateUpdateDelete.as_view()),
     #Atributo Producto get y post
     path("api/variante-producto", VariacionproductoListCreateView.as_view()),
     #Get, PUT, PATCH, DELETE
     path("api/variante-producto/<int:pk>", VariacionproductoDetailView.as_view()),
-    # Atributos
-    path("api/atributo", AtributoListCreateView.as_view()),
-    path("api/atributo/<int:pk>", AtributoDetailView.as_view()),
-
-    # Valores de atributo
-    path("api/valor-atributo", ValorAtributoListCreateView.as_view()),
-    path("api/valor-atributo/<int:pk>", ValorAtributoDetailView.as_view()),
+    #Atributo Producto
+    path("api/atributo", AtributoListCreateView.as_view(), name='atributo-list-create'),
+    path("api/atributo/<int:pk>", AtributoDetailView.as_view(), name='atributo-detail'),
+    #path("api/valor-atributo", ValorAtributoListView.as_view(), name='valor-atributo-list'),
     #Almacen
     path("api/almacen", AlmacenList.as_view()),
     path("api/almacen/<int:id>", AlmacenGet.as_view()),
@@ -96,9 +110,15 @@ urlpatterns = [
     path("api/factura/descuento-global", ActualizarDescuentoGlobalView.as_view()),
     #Logica barcode-scan
     path("api/barcode-scan",BarcodeScanView.as_view()),
+    #Configuracion correlativo
+    path("api/configuracion/correlativo/", ConfiguracionCorrelativoManageView.as_view()),
     #Reportes
     path('api/reportes/clientes/', ReporteclienteView.as_view(), name='reporte-clientes'),
-    path('api/reportes/inventario/', ReporteinventarioView.as_view(), name='reporte-inventario'),
+    path('api/reportes/inventario/', InventarioActualView.as_view(), name='reporte-inventario'),
     path('api/reportes/ventas/', ReporteventaView.as_view(), name='reporte-ventas'),
     path('api/reportes/facturas-detalle/', FacturaDetalleReporteView.as_view(), name='reporte-facturas-detalle'),
+    #Roles
+    path('api/rol', RolList.as_view(), name='rol-list'),
+    #Cierre de caja
+    path('api/accounting/cash-closing-report/', CashClosingReportView.as_view(), name='cash-closing-report'),
 ]

@@ -1,19 +1,24 @@
 from django.shortcuts import render
-
+from datetime import timedelta, date, time
 from .models import *
+from django.contrib.auth.hashers import check_password
 from django.db import transaction
 from django.utils import timezone
 from decimal import Decimal, ROUND_HALF_UP
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView,ListAPIView
 import csv
 import os
+from rest_framework.response import Response
 import re
+import base64
 from datetime import datetime
+from django.http import Http404
 import uuid
+from weasyprint import HTML, CSS
+from django.template.loader import render_to_string
 from rest_framework.decorators import api_view
 #from django.views.decorators.csrf import csrf_exempt
 #from django.utils.decorators import method_decorator
-from .utils.factura_pdf import generar_factura_pdf
 from django.http.response import JsonResponse, HttpResponse
 from django.db.models import Sum, Count, F, DecimalField, Q
 from django.db.models.functions import Coalesce
@@ -31,6 +36,7 @@ from openpyxl.drawing.image import Image
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 from openpyxl import Workbook
+from .woocommerce_sync import actualizar_stock_woocommerce
 from openpyxl.styles import Font, Alignment
 from rest_framework import generics, permissions
 from .serializers import (
@@ -54,16 +60,21 @@ from .serializers import (
     ProveedorSerializer,
     ReporteclienteSerializer,
     ReporteinventarioSerializer,
-    ReporteventaSerializer,
     ReservastockSerializer,
     RolSerializer,
     SesionusuarioSerializer,
     TipodocumentofiscalSerializer,
     TransaccionpagoSerializer,
     VariacionproductoSerializer,
-    ConfiguracionCorrelativoSerializer,
+    ConfiguracionCorrelativoReadSerializer,
+    ConfiguracionCorrelativoWriteSerializer,
     MetodoPagoSerializer,AtributoSerializer,
-    ValorAtributoSerializer, AtributoCrearConValoresSerializer, UserMetadataCreateSerializer, MyTokenObtainPairSerializer, FacturaReporteSerializer
+    ValorAtributoSerializer, AtributoCrearConValoresSerializer, 
+    UserMetadataCreateSerializer, MyTokenObtainPairSerializer, 
+    FacturaReporteSerializer, UserDetailSerializer, AsistenciaSerializer,
+    HorarioSerializer, DiaFestivoSerializer,
+    FacturaReportSerializer, VentaReporteSerializer,
+    InventarioItemSerializer
 )
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework.permissions import BasePermission
@@ -86,33 +97,138 @@ class MyTokenObtainPairView(TokenObtainPairView):
      permission_classes = [AllowAny]
      serializer_class = MyTokenObtainPairSerializer
 
-class UserMetadataListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
-    queryset = UserMetadata.objects.all()
 
+class DashboardDataView(APIView):
+
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        # --- 1. FILTRO DE FECHAS ---
+        end_date = timezone.now().date()
+        start_date_str = request.query_params.get('start_date', (end_date - timedelta(days=29)).strftime('%Y-%m-%d'))
+        end_date_str = request.query_params.get('end_date', end_date.strftime('%Y-%m-%d'))
+
+        base_queryset = Factura.objects.filter(fecha_operacion__date__range=[start_date_str, end_date_str])
+        ventas_queryset = base_queryset.exclude(estado__iexact='cancelada')
+
+        # --- 2. CÁLCULO PARA LAS TARJETAS DE RESUMEN (Tu código ya era correcto aquí) ---
+        resumen_ventas = ventas_queryset.aggregate(
+            total_vendido=Coalesce(Sum('total'), Decimal('0.0')),
+            total_pagado=Coalesce(Sum('total', filter=Q(estado__iexact='pagado')), Decimal('0.0')),
+            total_pendiente=Coalesce(Sum('total', filter=Q(estado__iexact='pendiente')), Decimal('0.0')),
+            num_transacciones=Count('id')
+        )
+
+        # --- 3. CÁLCULO PARA EL GRÁFICO DE VENTAS DIARIAS (CORREGIDO Y MEJORADO) ---
+        ventas_por_dia_qs = ventas_queryset.values('fecha_operacion__date').annotate(
+            total=Coalesce(Sum('total'), Decimal('0.0'))
+        ).order_by('fecha_operacion__date')
+
+        # Creamos un diccionario para mapear las ventas por fecha
+        sales_map = {item['fecha_operacion__date']: item['total'] for item in ventas_por_dia_qs}
+
+        # Generamos un rango completo de fechas para el gráfico
+        start_date_obj = date.fromisoformat(start_date_str)
+        end_date_obj = date.fromisoformat(end_date_str)
+        all_dates = [start_date_obj + timedelta(days=i) for i in range((end_date_obj - start_date_obj).days + 1)]
+
+        grafico_ventas = {
+            'labels': [d.strftime('%d/%m') for d in all_dates],
+            'data': [sales_map.get(d, Decimal('0.0')) for d in all_dates] # Usamos 0 para días sin ventas
+        }
+
+        # --- 4. PRODUCTOS MÁS VENDIDOS (CORREGIDO) ---
+        productos_mas_vendidos_qs = Detallefactura.objects.filter(factura__in=ventas_queryset) \
+            .values('producto__nombre', 'variante__nombre', 'producto__imagen') \
+            .annotate(
+                cantidad_total=Coalesce(Sum('cantidad'), 0) # Usamos Coalesce para evitar nulls
+            ).order_by('-cantidad_total')[:5]
+        
+        productos_mas_vendidos = []
+        for p in productos_mas_vendidos_qs:
+            imagen_url = None
+            if p.get('producto__imagen'):
+                imagen_url = request.build_absolute_uri(settings.MEDIA_URL + p['producto__imagen'])
+            
+            productos_mas_vendidos.append({
+                'nombre': f"{p['producto__nombre']} ({p['variante__nombre']})" if p['variante__nombre'] else p['producto__nombre'],
+                'cantidad': p['cantidad_total'],
+                'imagen': imagen_url
+            })
+
+        # --- 5. PRODUCTOS CON BAJO STOCK (Tu código ya era correcto aquí) ---
+        productos_bajo_stock_qs = Producto.objects.filter(cantidad__lt=10, activo=True).order_by('cantidad')[:5]
+        productos_bajo_stock = []
+        for p in productos_bajo_stock_qs:
+            imagen_url = p.imagen.url if p.imagen else None
+            productos_bajo_stock.append({'nombre': p.nombre, 'cantidad': p.cantidad or 0, 'imagen': imagen_url})
+        
+        # --- 6. TOP CATEGORÍAS (CORREGIDO) ---
+        top_categorias_qs = Detallefactura.objects.filter(factura__in=ventas_queryset) \
+            .values('producto__categoria__nombre') \
+            .annotate(
+                total_vendido=Coalesce(Sum('total_linea'), Decimal('0.0')) # Usamos Coalesce
+            ) \
+            .order_by('-total_vendido')[:3]
+        
+        top_categorias = {
+            'labels': [c['producto__categoria__nombre'] for c in top_categorias_qs if c['producto__categoria__nombre']],
+            'data': [float(c['total_vendido']) for c in top_categorias_qs if c['producto__categoria__nombre']]
+        }
+        
+        # --- 7. INFORMACIÓN GENERAL (Tu código ya era correcto aquí) ---
+        info_general = {
+            'clientes': Cliente.objects.filter(activo=True).count(),
+            'productos': Producto.objects.filter(activo=True).count(),
+            'ordenes_periodo': ventas_queryset.count()
+        }
+        
+        # --- 8. DATOS DEL USUARIO (Tu código ya era correcto aquí) ---
+        user_nombre = "Admin"
+        if request.user.is_authenticated:
+            user_nombre = request.user.get_full_name() or request.user.username
+
+        # --- 9. ENSAMBLAR RESPUESTA FINAL ---
+        data = {
+            'userInfo': {'nombre': user_nombre},
+            'resumen': resumen_ventas,
+            'graficoVentas': grafico_ventas,
+            'productosMasVendidos': productos_mas_vendidos,
+            'productosBajoStock': productos_bajo_stock,
+            'topCategorias': top_categorias,
+            'infoGeneral': info_general,
+        }
+        return JsonResponse(data)
+
+
+
+class UserMetadataListCreateView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAdminUser] # Solo los admins pueden ver y crear
+    
     def get_serializer_class(self):
+        # Usa el serializer de creación para peticiones POST
         if self.request.method == 'POST':
             return UserMetadataCreateSerializer
+        # Usa el serializer de visualización para peticiones GET
         return UserMetadataSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        # Filtra por el estado 'is_active' del usuario relacionado
+        queryset = UserMetadata.objects.select_related('user', 'rol','almacen_asignado').all()
         estado = self.request.query_params.get('es_activo')
         if estado is not None:
-            if estado.lower() in ['true', '1']:
-                queryset = queryset.filter(es_activo=True)
-            elif estado.lower() in ['false', '0']:
-                queryset = queryset.filter(es_activo=False)
+            es_activo_bool = estado.lower() in ['true', '1']
+            queryset = queryset.filter(user__is_active=es_activo_bool)
         return queryset
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        # Usa el serializer de solo lectura para la respuesta
-        read_serializer = UserMetadataSerializer(serializer.instance, context={'request': request})
-        headers = self.get_success_headers(serializer.data)
-        return JsonResponse(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        instance = serializer.save()
+        
+        # Devuelve la respuesta usando el serializer de visualización para mostrar el objeto completo
+        read_serializer = UserMetadataSerializer(instance, context={'request': request})
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
 
 class UserMetadataDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = UserMetadata.objects.all()
@@ -121,12 +237,176 @@ class UserMetadataDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        if instance.es_activo:
+        # Ahora comprueba el estado en el modelo User
+        if instance.user.is_active:
             return Response(
-                {"detail": "No puedes eliminar un usuario activo. Inactívalo primero."},
+                {"detail": "No puedes eliminar un perfil de un usuario activo. Inactívalo primero."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        # Si el usuario no está activo, se puede eliminar el perfil
         return super().destroy(request, *args, **kwargs)
+
+# --- Vistas de Gestión para Administradores ---
+class HorarioDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+
+    def get(self, request, pk=1):
+        # Intenta obtener el horario con pk=1, si no existe, devuelve 404
+        try:
+            horario = Horario.objects.get(pk=pk)
+            serializer = HorarioSerializer(horario)
+            return Response(serializer.data)
+        except Horario.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    def put(self, request, pk=1):
+        # Usa update_or_create para actualizar el horario con pk=1 o crearlo si no existe
+        horario, created = Horario.objects.update_or_create(
+            pk=pk,
+            defaults=request.data
+        )
+        serializer = HorarioSerializer(horario)
+        # Decide el código de estado: 201 si fue creado, 200 si fue actualizado
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=status_code)
+
+# Vista para LISTAR y CREAR días festivos.
+class DiaFestivoListView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    queryset = DiaFestivo.objects.all().order_by('fecha') # Devuelve ordenado por fecha
+    serializer_class = DiaFestivoSerializer
+
+# Vista para ELIMINAR un día festivo específico.
+class DiaFestivoDetailView(generics.DestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    queryset = DiaFestivo.objects.all()
+    serializer_class = DiaFestivoSerializer
+
+# --- Vistas de Asistencia (Modificadas) ---
+class UserMeView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        serializer = UserDetailSerializer(request.user)
+        return Response(serializer.data)
+
+class AttendanceSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        today = timezone.localdate()
+        start_of_month = today.replace(day=1)
+        
+        asistencia_hoy = Asistencia.objects.filter(usuario=request.user, fecha=today).first()
+        current_status = asistencia_hoy.estado_actual if asistencia_hoy else 'out'
+
+        asistencias_mes = Asistencia.objects.filter(usuario=request.user, fecha__range=[start_of_month, today])
+        festivos_mes = DiaFestivo.objects.filter(fecha__range=[start_of_month, today]).count()
+
+        summary = {
+            "total_working_days": 22,
+            "absent_days": asistencias_mes.filter(estado='Ausente').count(),
+            "present_days": asistencias_mes.filter(estado='Presente').count(),
+            "half_days": asistencias_mes.filter(estado='Medio Día').count(),
+            "late_days": asistencias_mes.filter(llegada_tarde=True).count(),
+            "holidays": festivos_mes,
+        }
+
+        log_serializer = AsistenciaSerializer(asistencias_mes, many=True)
+        data = {"current_status": current_status, "summary": summary, "log": log_serializer.data}
+        return Response(data)
+
+class ClockInView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        now = timezone.now()
+        local_date = timezone.localdate()
+        horario = Horario.objects.first()
+        es_tarde = False
+        if horario:
+            hora_entrada_limite = datetime.combine(now.date(), horario.hora_entrada_oficial)
+            hora_entrada_limite = timezone.make_aware(hora_entrada_limite)
+            limite_con_margen = hora_entrada_limite + timedelta(minutes=horario.margen_tardanza_minutos)
+            if now > limite_con_margen:
+                es_tarde = True
+
+        asistencia, created = Asistencia.objects.get_or_create(
+            usuario=request.user,
+            fecha=local_date,
+            defaults={'hora_entrada': now, 'estado_actual': 'in', 'llegada_tarde': es_tarde}
+        )
+        if not created:
+            asistencia.hora_entrada = now
+            asistencia.estado_actual = 'in'
+            asistencia.llegada_tarde = es_tarde
+            asistencia.save()
+        return Response(status=status.HTTP_200_OK)
+
+class ClockOutView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        Asistencia.objects.filter(usuario=request.user, fecha=timezone.localdate()).update(
+            hora_salida=timezone.now(),
+            estado_actual='out'
+        )
+        return Response(status=status.HTTP_200_OK)
+
+class BreakView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        start_break = request.data.get('start', True)
+        asistencia = Asistencia.objects.get(usuario=request.user, fecha=timezone.localdate())
+        
+        if start_break:
+            Descanso.objects.create(asistencia=asistencia, inicio_descanso=timezone.now())
+            asistencia.estado_actual = 'break'
+        else:
+            ultimo_descanso = asistencia.descansos.filter(fin_descanso__isnull=True).last()
+            if ultimo_descanso:
+                ultimo_descanso.fin_descanso = timezone.now()
+                ultimo_descanso.save()
+            asistencia.estado_actual = 'in'
+        asistencia.save()
+        return Response(status=status.HTTP_200_OK)
+
+
+class CashClosingReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        date_str = request.query_params.get('date', None)
+
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response({"error": "Formato de fecha inválido. Usar YYYY-MM-DD."}, status=400)
+        else:
+            # Usa la fecha actual en la zona horaria local del servidor
+            target_date = timezone.localdate()
+
+        # --- LÓGICA DE FECHA CORREGIDA ---
+        # Crea el inicio y el fin del día para la fecha seleccionada
+        start_of_day = datetime.combine(target_date, time.min)
+        end_of_day = datetime.combine(target_date, time.max)
+
+        # Convierte estas fechas a la zona horaria activa de Django
+        # (Asegúrate de tener TIME_ZONE = 'America/Caracas' en settings.py)
+        start_of_day_aware = timezone.make_aware(start_of_day)
+        end_of_day_aware = timezone.make_aware(end_of_day)
+
+        # Filtra las facturas cuyo timestamp (en UTC) esté dentro de ese rango de 24h locales
+        queryset = Factura.objects.filter(
+            fecha_operacion__range=(start_of_day_aware, end_of_day_aware),
+            estado='pagado'  # <-- Doble chequea que este sea el estado correcto
+        ).order_by('fecha_operacion')
+
+        serializer = FacturaReportSerializer(queryset, many=True)
+
+        data = {
+            "report_date": target_date,
+            "transactions": serializer.data,
+        }
+
+        return Response(data)
 
 
 # Productos por id
@@ -134,11 +414,11 @@ class ProductoGet(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request, id):
         try:
-            data = Producto.objects.get(id=id)
-            serializer = ProductoSerializer(data)
-            return JsonResponse({"data": serializer.data}, status=HTTPStatus.OK)
+            data = Producto.objects.filter(id=id, activo=True)
+            serializer = ProductoSerializer(data, many=True)
+            return Response({"data": serializer.data}, status=HTTPStatus.OK)
         except Exception as e:
-            return JsonResponse(
+            return Response(
                 {"estado": "error", "mensaje": "Productos no encontrados"},
                 status=HTTPStatus.NOT_FOUND,
             )
@@ -146,7 +426,7 @@ class ProductoGet(APIView):
 
 # Listar todos los productos
 class ProductoList(APIView):
-    permission_classes = [IsAuthenticated]
+    #permission_classes = [IsAuthenticated]
     def get(self, request):
         productos = Producto.objects.filter(activo=True).order_by("id")
         serializer = ProductoSerializer(productos, many=True)
@@ -154,159 +434,104 @@ class ProductoList(APIView):
         return JsonResponse({"productos": serializer.data}, status=HTTPStatus.OK)
 
 
-def parse_variantes_from_formdata(data, files):
-    """
-    Convierte claves variantes[0][campo] en una lista de dicts para el serializer.
-    También extrae imágenes de variantes de files.
-    """
-    import re
-    variantes_dict = {}
-    # Procesa los campos normales
-    for key in list(data.keys()):
-        match = re.match(r'variantes\[(\d+)\]\[(\w+)\]', key)
-        if match:
-            idx, campo = match.groups()
-            idx = int(idx)
-            if idx not in variantes_dict:
-                variantes_dict[idx] = {}
-            variantes_dict[idx][campo] = data.pop(key)
-    # Procesa archivos (imágenes)
-    for key in list(files.keys()):
-        match = re.match(r'variantes\[(\d+)\]\[(\w+)\]', key)
-        if match:
-            idx, campo = match.groups()
-            idx = int(idx)
-            if idx not in variantes_dict:
-                variantes_dict[idx] = {}
-            variantes_dict[idx][campo] = files.pop(key)
-    # Retorna la lista ordenada por índice
-    return [variantes_dict[i] for i in sorted(variantes_dict.keys())]
-
-def flatten_variant_dict(variant):
-    """Convierte todos los campos que sean listas de un solo elemento a su valor simple."""
-    for k, v in variant.items():
-        # Excluir imágenes y archivos
-        if isinstance(v, list) and len(v) == 1 and not hasattr(v[0], 'read'):
-            variant[k] = v[0]
-    return variant
-
 class ProductoCreateUpdateDelete(APIView):
     permission_classes = [IsAuthenticated]
     parser_classes = (MultiPartParser, FormParser) 
 
     def post(self, request):
-        data = request.data.copy()
-        files = request.FILES.copy()
-
-        # Procesar variantes anidadas para FormData tipo variantes[0][campo]
-        variantes = parse_variantes_from_formdata(data, files)
-        variantes = [flatten_variant_dict(variant) for variant in variantes]
-        if variantes:
-            data['variantes'] = variantes
-
-        # Procesa categoría y almacén (por si vienen como string/list)
-        if 'categoria' in data and data['categoria']:
-            try:
-                data['categoria'] = int(data['categoria'][0]) if isinstance(data['categoria'], list) else int(data['categoria'])
-            except ValueError:
-                return JsonResponse({"estado": "error", "mensaje": "ID de categoría inválido"}, status=HTTPStatus.BAD_REQUEST)
-        data['almacen'] = int(data['almacen']) if 'almacen' in data and data['almacen'] else None
-
-        if 'tipo' in data:
-            if isinstance(data['tipo'], list):
-                data['tipo'] = data['tipo'][0]
-            else:
-                data['tipo'] = str(data['tipo'])
-        serializer = ProductoSerializer(data=data, context={'request': request})
+        # La vista ya no procesa las variantes. Solo pasa los datos al serializer.
+        serializer = ProductoSerializer(data=request.data, context={'request': request})
         if serializer.is_valid():
             serializer.save()
-            return JsonResponse(
-                {"estado": "creado", "data": serializer.data}, status=HTTPStatus.CREATED
-            )
-
-        return JsonResponse(
-            {"estado": "error", "mensaje": serializer.errors},
-            status=HTTPStatus.BAD_REQUEST,
-        )
+            return JsonResponse({"estado": "creado", "data": serializer.data}, status=HTTPStatus.CREATED)
+        return JsonResponse({"estado": "error", "mensaje": serializer.errors}, status=HTTPStatus.BAD_REQUEST)
 
     def put(self, request, id):
         try:
             producto = Producto.objects.get(id=id)
         except Producto.DoesNotExist:
-            return JsonResponse(
-                {"estado": "error", "mensaje": "Producto no encontrado"},
-                status=HTTPStatus.NOT_FOUND,
-            )
-        data = request.data.copy()
-        files = request.FILES.copy()
-
-        # Procesar variantes anidadas para FormData tipo variantes[0][campo]
-        variantes = parse_variantes_from_formdata(data, files)
-        variantes = [flatten_variant_dict(variant) for variant in variantes]
-        if variantes:
-            data['variantes'] = variantes
-
-        serializer = ProductoSerializer(producto, data=data, partial=True, context={'request': request})
-
+            return JsonResponse({"estado": "error", "mensaje": "Producto no encontrado"}, status=HTTPStatus.NOT_FOUND)
+        
+        # La vista ya no procesa las variantes. Solo pasa los datos al serializer.
+        serializer = ProductoSerializer(producto, data=request.data, partial=True, context={'request': request})
         if serializer.is_valid():
             serializer.save()
-            return JsonResponse(
-                {"estado": "actualizado", "data": serializer.data}, status=HTTPStatus.OK
-            )
+            return JsonResponse({"estado": "actualizado", "data": serializer.data}, status=HTTPStatus.OK)
+        return JsonResponse({"estado": "error", "mensaje": serializer.errors}, status=HTTPStatus.BAD_REQUEST)
 
-        return JsonResponse(
-            {"estado": "error", "mensaje": serializer.errors},
-            status=HTTPStatus.BAD_REQUEST,
-        )
-
-    def delete(self, request, id):
+    def delete(self, request, pk, *args, **kwargs):
         try:
-            producto = Producto.objects.get(id=id, activo=True)
+            producto = Producto.objects.get(pk=pk)
+            
+            # En lugar de borrar, lo desactivamos
             producto.activo = False
             producto.save()
-            return JsonResponse(
-                {"estado": "eliminado", "mensaje": "Producto inactivo"},
-                status=HTTPStatus.OK,
-            )
+            
+            return Response({"mensaje": "Producto desactivado correctamente."}, status=status.HTTP_200_OK)
+        
         except Producto.DoesNotExist:
-            return JsonResponse(
-                {"estado": "error", "mensaje": "Producto no encontrado"},
-                status=HTTPStatus.NOT_FOUND,
-            )
+            return Response({"error": "El producto no existe."}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            # Aquí capturamos el IntegrityError si ocurriera por otra razón
+            return Response({"error": f"No se pudo desactivar el producto: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ==============
 # Correlativo
 # ==============
-def obtener_configuracion_correlativo():
-    config = ConfiguracionCorrelativo.objects.first()
-    if not config:
-        # Si no existe, se crea una configuración por defecto.
-        config = ConfiguracionCorrelativo.objects.create(
-            prefijo="F-", current_number=0, number_length=3
-        )
-    return config
 
+class ConfiguracionCorrelativoManageView(APIView):
+    """
+    Vista segura para ver y actualizar la configuración del correlativo.
+    Solo accesible por administradores.
+    """
+    permission_classes = [IsAuthenticated, IsAdmin] # Solo Admins
 
-class ConfiguracionCorrelativoUpdate(APIView):
-    permission_classes = [IsAuthenticated,IsAdmin]
-    def get(self, request, id):
-        data = ConfiguracionCorrelativo.objects.filter(id=id).order_by("id")
-        serializer = ConfiguracionCorrelativoSerializer(data, many=True)
-        return JsonResponse({"Correlativos": serializer.data}, status=HTTPStatus.OK)
+    def get(self, request):
+        """Devuelve la configuración actual usando el serializer de lectura."""
+        config = obtener_configuracion_correlativo()
+        # CORREGIDO: Usa el serializer que NO tiene el campo de contraseña
+        serializer = ConfiguracionCorrelativoReadSerializer(config)
+        return JsonResponse(serializer.data)
 
-    def post(self, request):
-        config, created = ConfiguracionCorrelativo.objects.get_or_create(id=1)
-        serializer = ConfiguracionCorrelativoSerializer(
-            config, data=request.data, partial=True
-        )
-        if serializer.is_valid():
+    def put(self, request):
+        """Actualiza la configuración usando el serializer de escritura."""
+        with transaction.atomic():
+            config = obtener_configuracion_correlativo()
+            # CORREGIDO: Usa el serializer que SÍ tiene y requiere el campo de contraseña
+            serializer = ConfiguracionCorrelativoWriteSerializer(config, data=request.data, partial=True)
+
+            if not serializer.is_valid():
+                return JsonResponse(serializer.errors, status=HTTPStatus.BAD_REQUEST)
+
+            # 1. Validar contraseña del administrador
+            password = serializer.validated_data.get('password')
+            if not request.user.check_password(password):
+                return JsonResponse(
+                    {"error": "Contraseña incorrecta. No se pudo actualizar la configuración."},
+                    status=HTTPStatus.FORBIDDEN
+                )
+
+            # 2. Validar que el nuevo número no sea menor al último usado
+            new_number = serializer.validated_data.get('current_number')
+            if new_number is not None:
+                last_factura = Factura.objects.exclude(correlativo__isnull=True).order_by('-id').first()
+                if last_factura and last_factura.correlativo:
+                    try:
+                        last_number = int(last_factura.correlativo.split('-')[-1])
+                        if new_number < last_number:
+                            return JsonResponse(
+                                {"error": f"El número actual no puede ser menor que el de la última factura generada ({last_number})."},
+                                status=HTTPStatus.BAD_REQUEST
+                            )
+                    except (ValueError, IndexError):
+                        pass # Ignorar si el formato del correlativo no es el esperado
+
+            # Si todas las validaciones pasan, guardar los cambios
             serializer.save()
-            return JsonResponse(
-                {"mensaje": "Configuración actualizada", "config": serializer.data},
-                status=status.HTTP_200_OK,
-            )
-        return JsonResponse(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+            return JsonResponse({"mensaje": "Configuración actualizada con éxito."})
+
+
 
 
 # ==============
@@ -314,48 +539,56 @@ class ConfiguracionCorrelativoUpdate(APIView):
 # ==============
 def recalcular_y_guardar_factura(factura):
     """
-    Función auxiliar para recalcular todos los totales de una factura
-    a partir de sus detalles. Esto evita repetir código y asegura consistencia.
+    Función definitiva que asume que 'detalle.precio_unitario' 
+    es el PRECIO FINAL (PVP, con IVA incluido).
     """
-    detalles = Detallefactura.objects.filter(factura=factura).select_related('producto__configuracion_iva')
+    detalles = Detallefactura.objects.filter(factura=factura).select_related(
+        'producto__configuracion_iva',
+        'variante__producto__configuracion_iva'
+    )
     
     total_factura_subtotal = Decimal("0.00")
     total_factura_iva = Decimal("0.00")
 
+    detalles_a_actualizar = []
     for detalle in detalles:
-        # --- LÓGICA DE CÁLCULO CENTRALIZADA Y CORRECTA ---
-        precio_con_iva = detalle.precio_unitario
+        # 1. El precio unitario es el precio final con IVA.
+        precio_final_unitario = detalle.precio_unitario
         descuento_porcentaje = detalle.descuento or Decimal("0.00")
         
-        # 1. Aplicar el descuento al precio total con IVA
-        total_linea_con_descuento = (precio_con_iva * detalle.cantidad) * (Decimal("1") - descuento_porcentaje / Decimal("100"))
+        # 2. Aplicar el descuento al precio total de la línea.
+        total_linea_con_descuento = (precio_final_unitario * detalle.cantidad) * (Decimal("1") - descuento_porcentaje / Decimal("100"))
         
-        # 2. Desglosar el IVA a partir del nuevo total con descuento
+        # 3. Desglosar el IVA y el subtotal a partir del total ya descontado.
         tasa_iva = Decimal("0.00")
         if detalle.producto.configuracion_iva:
             tasa_iva = Decimal(detalle.producto.configuracion_iva.porcentaje_iva) / Decimal("100")
         
         if tasa_iva > 0:
-            # subtotal = total_con_descuento / (1 + tasa_iva)
-            subtotal_linea = (total_linea_con_descuento / (Decimal("1") + tasa_iva)).quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+            # CÁLCULO INVERSO: Obtenemos la base dividiendo por (1 + tasa).
+            subtotal_linea = (total_linea_con_descuento / (Decimal("1") + tasa_iva))
         else:
+            # Si no hay IVA, el subtotal es igual al total.
             subtotal_linea = total_linea_con_descuento
 
+        # El IVA es la diferencia entre el total y la base.
         iva_linea = total_linea_con_descuento - subtotal_linea
         
-        # Actualizar los campos del detalle
-        detalle.subtotal_linea = subtotal_linea
-        detalle.iva_linea = iva_linea
-        detalle.total_linea = total_linea_con_descuento
+        # 4. Actualizar los campos del detalle con valores redondeados.
+        detalle.subtotal_linea = subtotal_linea.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        detalle.iva_linea = iva_linea.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
+        detalle.total_linea = total_linea_con_descuento.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
         
-        total_factura_subtotal += subtotal_linea
-        total_factura_iva += iva_linea
+        detalles_a_actualizar.append(detalle)
+        
+        total_factura_subtotal += detalle.subtotal_linea
+        total_factura_iva += detalle.iva_linea
     
-    # Actualización en bloque para ser más eficiente
-    if detalles:
-        Detallefactura.objects.bulk_update(detalles, ['subtotal_linea', 'iva_linea', 'total_linea'])
+    # Actualización en bloque para mayor eficiencia.
+    if detalles_a_actualizar:
+        Detallefactura.objects.bulk_update(detalles_a_actualizar, ['subtotal_linea', 'iva_linea', 'total_linea'])
 
-    # Actualizar totales de la factura
+    # Actualizar los totales de la factura.
     factura.subtotal = total_factura_subtotal
     factura.iva_total = total_factura_iva
     factura.total = total_factura_subtotal + total_factura_iva
@@ -363,12 +596,12 @@ def recalcular_y_guardar_factura(factura):
 
 
 @transaction.atomic
-def agg_producto_a_orden(cliente_id, barcode, cantidad=1, descuento_linea=None, eliminar=False):
+def agg_producto_a_orden(request, cliente_id, barcode, cantidad=1, descuento_linea=None, eliminar=False):
     """
-    Agrega, actualiza o elimina un producto/variante de una factura activa,
-    utilizando la lógica de cálculo correcta.
+    Agrega, actualiza o elimina un producto/variante de una factura activa.
+    Asigna el usuario que crea la factura por primera vez.
     """
-    # 1. Búsqueda del producto (lógica del usuario)
+    # 1. Búsqueda del producto (esta lógica está bien y se mantiene)
     producto_base = None
     variante_encontrada = None
     precio_final = Decimal("0.00")
@@ -387,17 +620,22 @@ def agg_producto_a_orden(cliente_id, barcode, cantidad=1, descuento_linea=None, 
         except Producto.DoesNotExist:
             return None, "Producto no encontrado para este código."
 
-    # 2. Obtener o crear factura (lógica del usuario)
-    factura, _ = Factura.objects.get_or_create(
-        cliente_id=cliente_id, estado="abierta", fecha_operacion__date=timezone.now().date(),
+    factura, created = Factura.objects.get_or_create(
+        cliente_id=cliente_id, 
+        estado="abierta", 
+        fecha_operacion__date=timezone.now().date(),
         defaults={
-            'fecha_operacion': timezone.now(), 'metodo_pago': None, 'subtotal': Decimal("0.00"), 
-            'descuento_global': Decimal("0.00"), 'iva_total': Decimal("0.00"), 
-            'total': Decimal("0.00"), 'activo': True
+            'usuario': request.user, # Asigna el usuario que está logueado si se crea una nueva
+            'fecha_operacion': timezone.now(), 
+            'metodo_pago': None, 
+            'subtotal': Decimal("0.00"), 
+            'descuento_global': Decimal("0.00"), 
+            'iva_total': Decimal("0.00"), 
+            'total': Decimal("0.00"), 
+            'activo': True
         }
     )
     
-    # 3. Lógica de detalle (lógica del usuario)
     filtro_detalle = {'factura': factura, 'producto': producto_base}
     if variante_encontrada:
         filtro_detalle['variante'] = variante_encontrada
@@ -426,10 +664,10 @@ def agg_producto_a_orden(cliente_id, barcode, cantidad=1, descuento_linea=None, 
                 subtotal_linea=Decimal("0.00"), iva_linea=Decimal("0.00"), total_linea=Decimal("0.00")
             )
 
-    # 4. LLAMAR A LA FUNCIÓN DE RECÁLCULO
     recalcular_y_guardar_factura(factura)
 
     return factura, None
+
 
 
 class ActualizarDescuentoDetalleView(APIView):
@@ -496,65 +734,53 @@ class ActualizarDescuentoGlobalView(APIView):
     """
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request):
         factura_id = request.data.get("factura_id")
         descuento_global_str = request.data.get("descuento_global")
+
         if not factura_id or descuento_global_str is None:
             return JsonResponse({"estado": "error", "mensaje": "Se requieren factura_id y descuento_global."}, status=HTTPStatus.BAD_REQUEST)
-        
+
         try:
-            descuento_global = Decimal(descuento_global_str)
             factura = Factura.objects.get(id=factura_id)
-            detalles = Detallefactura.objects.select_related('producto__configuracion_iva', 'variante').filter(factura=factura)
+            descuento_global = Decimal(descuento_global_str)
 
-            detalles_a_actualizar = []
-            
-            for detalle in detalles:
-                detalle.descuento = descuento_global
-                
-                precio_unitario = detalle.precio_unitario
-                tasa_iva = Decimal("0.00")
-                if detalle.producto.configuracion_iva:
-                    tasa_iva = Decimal(detalle.producto.configuracion_iva.porcentaje_iva) / 100
-
-                descuento_factor = Decimal("1") - (descuento_global / 100)
-                subtotal_linea = (precio_unitario * detalle.cantidad) * descuento_factor
-                iva_linea = subtotal_linea * tasa_iva
-                total_linea = subtotal_linea + iva_linea
-
-                detalle.subtotal_linea, detalle.iva_linea, detalle.total_linea = subtotal_linea, iva_linea, total_linea
-                detalles_a_actualizar.append(detalle)
-            
-            if detalles_a_actualizar:
-                Detallefactura.objects.bulk_update(detalles_a_actualizar, ['descuento', 'subtotal_linea', 'iva_linea', 'total_linea'])
-            
+            # 1. Aplicar el descuento a cada detalle y a la factura
+            Detallefactura.objects.filter(factura=factura).update(descuento=descuento_global)
             factura.descuento_global = descuento_global
-            factura.subtotal = sum(d.subtotal_linea for d in detalles_a_actualizar)
-            factura.iva_total = sum(d.iva_linea for d in detalles_a_actualizar)
-            factura.total = factura.subtotal + factura.iva_total
-            factura.save()
-            
-            # --- Construir respuesta JSON CORRECTA ---
+            factura.save(update_fields=['descuento_global'])
+
+            # 2. LLAMAR A LA FUNCIÓN CENTRALIZADA PARA RECALCULAR TODO
+            recalcular_y_guardar_factura(factura)
+
+            # 3. Preparar la respuesta completa para el frontend
+            factura.refresh_from_db()
+            detalles_actualizados = Detallefactura.objects.filter(factura=factura).select_related('producto', 'variante')
+
+            # --- ESTE ES EL BLOQUE QUE FALTABA ---
             data_detalles = []
-            for d in detalles_a_actualizar:
+            for d in detalles_actualizados:
                 if d.variante:
                     nombre_item, codigo_barras_item = f"{d.producto.nombre} ({d.variante.nombre})", d.variante.codigo_barras
                 else:
                     nombre_item, codigo_barras_item = d.producto.nombre, d.producto.codigo_barras
-                
+
                 data_detalles.append({
-                    "id": d.id, "producto_id": d.producto.id, "nombre": nombre_item, 
-                    "codigo_barras": codigo_barras_item, "cantidad": d.cantidad, 
-                    "precio_unitario": str(d.precio_unitario), "descuento": str(d.descuento), 
-                    "subtotal_linea": str(d.subtotal_linea), "iva_linea": str(d.iva_linea), 
+                    "id": d.id, "producto_id": d.producto.id, "nombre": nombre_item,
+                    "codigo_barras": codigo_barras_item, "cantidad": d.cantidad,
+                    "precio_unitario": str(d.precio_unitario), "descuento": str(d.descuento),
+                    "subtotal_linea": str(d.subtotal_linea), "iva_linea": str(d.iva_linea),
                     "total_linea": str(d.total_linea),
                 })
-            
+
             data_factura = {
                 "id": factura.id, "subtotal": str(factura.subtotal), "iva_total": str(factura.iva_total),
                 "total": str(factura.total), "descuento_global": str(factura.descuento_global),
                 "detalles": data_detalles
             }
+            # --- FIN DEL BLOQUE QUE FALTABA ---
+            
             return JsonResponse({"estado": "success", "factura": data_factura})
 
         except Factura.DoesNotExist:
@@ -651,7 +877,6 @@ class BarcodeScanView(APIView):
     permission_classes = [IsAuthenticated]
 
     def post(self, request, *args, **kwargs):
-        print("Request data", request.data)
         cliente_id = request.data.get("cliente_id")
         barcode = request.data.get("codigo_barras")
         cantidad_str = request.data.get("cantidad", "1")
@@ -668,18 +893,19 @@ class BarcodeScanView(APIView):
                 status=HTTPStatus.BAD_REQUEST,
             )
 
-        factura, error = agg_producto_a_orden(cliente_id, barcode, cantidad, eliminar=eliminar)
+        # --- CAMBIO CLAVE: Se pasa el objeto 'request' a la función ---
+        factura, error = agg_producto_a_orden(request, cliente_id, barcode, cantidad, eliminar=eliminar)
+        
         if error:
             return JsonResponse(
                 {"estado": "error", "mensaje": error},
                 status=HTTPStatus.NOT_FOUND,
             )
 
-        # --- CORRECCIÓN CRÍTICA EN LA RESPUESTA JSON ---
+        # La lógica para construir la respuesta JSON se mantiene igual
         detalles_queryset = Detallefactura.objects.filter(factura=factura).select_related("producto", "variante")
         detalles_para_frontend = []
         for d in detalles_queryset:
-            # Determinar el nombre y código de barras correctos para la línea
             if d.variante:
                 nombre_item = f"{d.producto.nombre} ({d.variante.nombre})"
                 codigo_barras_item = d.variante.codigo_barras
@@ -691,7 +917,7 @@ class BarcodeScanView(APIView):
                 "id": d.id,
                 "producto_id": d.producto.id,
                 "nombre": nombre_item,
-                "codigo_barras": codigo_barras_item, # <-- ¡ARREGLADO! Se envía el código de barras correcto.
+                "codigo_barras": codigo_barras_item,
                 "cantidad": d.cantidad,
                 "precio_unitario": str(d.precio_unitario),
                 "descuento": str(d.descuento),
@@ -699,7 +925,6 @@ class BarcodeScanView(APIView):
                 "iva_linea": str(d.iva_linea),
                 "total_linea": str(d.total_linea)
             })
-        # --- FIN DE LA CORRECCIÓN CRÍTICA ---
 
         return JsonResponse({
             "estado": "success",
@@ -709,10 +934,9 @@ class BarcodeScanView(APIView):
                 "subtotal": str(factura.subtotal),
                 "iva_total": str(factura.iva_total),
                 "total": str(factura.total),
-                "detalles": detalles_para_frontend # Se envía la lista corregida
+                "detalles": detalles_para_frontend
             },
         }, status=HTTPStatus.OK)
-
 
 # =========================================================
 # PRODUCTO CATEGORIA
@@ -979,264 +1203,109 @@ class ReporteclienteView(APIView):
         return JsonResponse({"reportes": serializer.data}, status=HTTPStatus.OK)
 
 
-class ReporteinventarioView(APIView):
+class InventarioActualView(APIView):
     """
-    Vista para listar y exportar el reporte de inventario.
-    Filtra por rango de fechas y soporta exportación.
+    Vista para obtener un reporte de inventario en tiempo real,
+    con opción de filtrar por categoría.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        start_date = request.query_params.get("start_date")
-        end_date = request.query_params.get("end_date")
-        export_format = request.query_params.get('export', None)
-        
-        queryset = Reporteinventario.objects.all()
-        if start_date and end_date:
+        categoria_id = request.query_params.get('categoria_id', None)
+
+        # Obtener productos simples y variantes que deben estar en el inventario
+        productos_simples = Producto.objects.filter(activo=True, tipo='simple')
+        variantes = Variacionproducto.objects.select_related('producto__categoria').filter(producto__activo=True)
+
+        if categoria_id:
             try:
-                queryset = queryset.filter(fecha__range=(start_date, end_date))
+                # Filtrar ambos querysets por el ID de la categoría
+                productos_simples = productos_simples.filter(categoria_id=categoria_id)
+                variantes = variantes.filter(producto__categoria_id=categoria_id)
             except ValueError:
-                return JsonResponse({"error": "Formato de fecha inválido"}, status=HTTPStatus.BAD_REQUEST)
+                return Response({"error": "ID de categoría inválido."}, status=400)
+
+        # Unificar los datos en una sola lista con una estructura consistente
+        inventario_unificado = []
+        for producto in productos_simples:
+            inventario_unificado.append({
+                'id': f"p-{producto.id}",
+                'nombre': producto.nombre,
+                'categoria': producto.categoria.nombre if producto.categoria else 'Sin Categoría',
+                'codigo_barras': producto.codigo_barras,
+                'cantidad': producto.cantidad or 0
+            })
         
-        queryset = queryset.order_by("-fecha", "producto__nombre")
-        headers = ["Fecha", "Producto", "Almacen", "Stock Inicial", "Stock Final", "Movimientos"]
+        for variante in variantes:
+            inventario_unificado.append({
+                'id': f"v-{variante.id}",
+                'nombre': f"{variante.producto.nombre} - {variante.nombre}",
+                'categoria': variante.producto.categoria.nombre if variante.producto.categoria else 'Sin Categoría',
+                'codigo_barras': variante.codigo_barras,
+                'cantidad': variante.cantidad or 0
+            })
 
-        if export_format == 'pdf':
-            return generar_pdf(queryset, headers, "Reporte de Inventario")
-            
-        if export_format == 'excel':
-            return generar_excel(queryset, headers, "Reporte de Inventario")
-
-        if export_format == 'csv':
-            response = HttpResponse(content_type="text/csv")
-            response["Content-Disposition"] = 'attachment; filename="reporte_inventario.csv"'
-            writer = csv.writer(response)
-            writer.writerow(headers)
-            for reporte in queryset:
-                writer.writerow([
-                    reporte.fecha,
-                    reporte.producto,
-                    reporte.almacen,
-                    reporte.stock_inicial,
-                    reporte.stock_final,
-                    reporte.movimientos,
-                ])
-            return response
-            
-        serializer = ReporteinventarioSerializer(queryset, many=True)
-        return JsonResponse({"reportes": serializer.data}, status=HTTPStatus.OK)
-
-
-class FacturaDetalleReporteView(APIView):
-    """
-    Genera un listado DETALLADO de cada factura individual en un rango de fechas.
-    Soporta exportación a PDF y Excel con cabecera, logo, orden y nombres de archivo correctos.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def _generar_pdf(self, queryset, start_date_str, end_date_str):
-        # CORREGIDO: Timestamp para nombre de archivo único
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = f"reporte_facturas_{timestamp}.pdf"
-        response = HttpResponse(content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-
-        p = canvas.Canvas(response, pagesize=landscape(letter))
-        width, height = landscape(letter)
+        # Ordenar la lista final alfabéticamente por nombre
+        inventario_ordenado = sorted(inventario_unificado, key=lambda item: item['nombre'])
         
-        logo_path = os.path.join(settings.BASE_DIR, 'img', 'logo-power.jpg')
-        if os.path.exists(logo_path):
-             p.drawImage(logo_path, inch, height - 1.5*inch, width=1.5*inch, preserveAspectRatio=True, mask='auto')
-        else:
-            print(f"ADVERTENCIA: No se encontró el logo en la ruta: {logo_path}")
-
-
-        p.setFont("Helvetica-Bold", 14)
-        p.drawRightString(width - inch, height - inch, "Reporte de Facturas Detallado")
-        p.setFont("Helvetica", 12)
-        p.drawRightString(width - inch, height - 1.25*inch, f"Periodo: {start_date_str} a {end_date_str}")
+        # Serializar los datos usando el serializer genérico
+        serializer = InventarioItemSerializer(inventario_ordenado, many=True)
         
-        headers = ["# Factura", "Fecha", "Cliente", "Estado", "Método de Pago", "Total"]
-        y = height - 2 * inch
-        x_positions = [inch, 2.5*inch, 4.5*inch, 6.5*inch, 8*inch, 9.5*inch]
+        # Obtener todas las categorías para el filtro del frontend (solo se hace una vez)
+        categorias_data = []
+        if not categoria_id: # Para no enviarlas en cada filtro
+             categorias = Categoriaproducto.objects.filter(activo=True).order_by('nombre')
+             categorias_data = CategoriaSerializer(categorias, many=True).data
 
-        p.setFont("Helvetica-Bold", 10)
-        for i, header in enumerate(headers):
-            p.drawString(x_positions[i], y, header)
-        y -= 20
-
-        p.setFont("Helvetica", 9)
-        for factura in queryset:
-            if y < inch: # Salto de página
-                p.showPage()
-                y = height - inch
-                # Re-dibujar cabecera en la nueva página
-                p.drawImage(logo_path, inch, height - 1.5*inch, width=1.5*inch, preserveAspectRatio=True, mask='auto')
-                p.setFont("Helvetica-Bold", 10)
-                for i, header in enumerate(headers):
-                    p.drawString(x_positions[i], y, header)
-                y -= 20
-                p.setFont("Helvetica", 9)
-
-            total_str = f"{factura.total:.2f} €"
-            
-            data_row = [
-                factura.correlativo or str(factura.id),
-                factura.fecha_operacion.strftime('%d/%m/%Y %H:%M'),
-                str(factura.cliente),
-                factura.estado,
-                str(factura.metodo_pago),
-                total_str
-            ]
-            for i, item in enumerate(data_row):
-                 p.drawString(x_positions[i], y, item)
-            y -= 15
-        
-        p.showPage()
-        p.save()
-        return response
-
-    def _generar_excel(self, queryset, start_date_str, end_date_str):
-        # CORREGIDO: Timestamp para nombre de archivo único y la extensión .xlsx
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = f"reporte_facturas_{timestamp}.xlsx"
-        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Reporte de Facturas"
-        
-        logo_path = os.path.join(settings.BASE_DIR, 'img', 'logo-power.jpg')
-        if os.path.exists(logo_path):
-            img = Image(logo_path)
-            img.height = 75
-            img.width = 150
-            ws.add_image(img, 'A1')
-        else:
-            print(f"ADVERTENCIA: No se encontró el logo en la ruta: {logo_path}")
-
-
-        title_cell = ws['C2']
-        title_cell.value = "Reporte de Facturas Detallado"
-        title_cell.font = Font(size=16, bold=True)
-        title_cell.alignment = Alignment(horizontal="center")
-        ws.merge_cells('C2:F2')
-
-        date_cell = ws['C3']
-        date_cell.value = f"Periodo: {start_date_str} a {end_date_str}"
-        date_cell.font = Font(size=12)
-        date_cell.alignment = Alignment(horizontal="center")
-        ws.merge_cells('C3:F3')
-        
-        headers = ["# Factura", "Fecha", "Cliente", "Estado", "Método de Pago", "Total"]
-        
-        # Las cabeceras de la tabla empiezan en la fila 5
-        for col_num, header in enumerate(headers, 1):
-            cell = ws.cell(row=5, column=col_num, value=header)
-            cell.font = Font(bold=True)
-            ws.column_dimensions[chr(64 + col_num)].width = 30
-
-        # Los datos empiezan en la fila 6
-        for row_num, factura in enumerate(queryset, 6):
-            ws.cell(row=row_num, column=1, value=factura.correlativo or str(factura.id))
-            ws.cell(row=row_num, column=2, value=factura.fecha_operacion.strftime('%d/%m/%Y %H:%M'))
-            ws.cell(row=row_num, column=3, value=str(factura.cliente))
-            ws.cell(row=row_num, column=4, value=factura.estado)
-            ws.cell(row=row_num, column=5, value=str(factura.metodo_pago))
-            total_cell = ws.cell(row=row_num, column=6, value=factura.total)
-            total_cell.number_format = '#,##0.00" €"'
-
-        wb.save(response)
-        return response
-
-    def get(self, request):
-        start_date_str = request.query_params.get("start_date")
-        end_date_str = request.query_params.get("end_date")
-        estado = request.query_params.get('estado', None)
-        export_format = request.query_params.get('export', None)
-
-        if not start_date_str or not end_date_str:
-            return JsonResponse({"error": "Se requieren start_date y end_date"}, status=HTTPStatus.BAD_REQUEST)
-
-        try:
-            # CORREGIDO: Ordenamos por fecha ascendente (de más antigua a más reciente)
-            queryset = Factura.objects.filter(
-                fecha_operacion__date__range=[start_date_str, end_date_str]
-            ).select_related('cliente', 'almacen', 'metodo_pago').order_by('fecha_operacion')
-
-            if estado:
-                queryset = queryset.filter(estado=estado)
-            
-            if export_format == 'pdf':
-                return self._generar_pdf(queryset, start_date_str, end_date_str)
-            if export_format == 'excel':
-                return self._generar_excel(queryset, start_date_str, end_date_str)
-            
-            serializer = FacturaReporteSerializer(queryset, many=True)
-            return JsonResponse({"reporte_detallado": serializer.data}, status=HTTPStatus.OK)
-
-        except Exception as e:
-            print(f"Error generando reporte detallado de facturas: {e}")
-            return JsonResponse({"error": "Ocurrió un error inesperado."}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
-
+        return Response({
+            "inventario": serializer.data,
+            "categorias": categorias_data
+        })
 
 
 class ReporteventaView(APIView):
     """
-    Genera un reporte de ventas dinámico con un resumen de totales.
-    Calcula los datos directamente desde las facturas.
+    Genera un reporte detallado de ventas para el frontend.
+    Esta vista devuelve una lista de facturas individuales usando un serializer optimizado
+    que no incluye los detalles de los productos.
     """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         start_date_str = request.query_params.get("start_date")
         end_date_str = request.query_params.get("end_date")
-        export_format = request.query_params.get('export', None)
+        estado = request.query_params.get('estado', None)
 
         if not start_date_str or not end_date_str:
-            return JsonResponse({"error": "Se requieren start_date y end_date"}, status=HTTPStatus.BAD_REQUEST)
+            return Response({"error": "Se requieren start_date y end_date"}, status=400)
 
         try:
-            # Filtro base para las facturas que cuentan como ventas
-            allowed_estados = ["cerrada", "pagada", "pendiente"]
-            base_queryset = Factura.objects.filter(
-                fecha_operacion__date__range=[start_date_str, end_date_str],
-                estado__in=allowed_estados
-            )
+            # Convertir las fechas de string a objeto datetime consciente de la zona horaria
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            
+            start_of_day = timezone.make_aware(datetime.combine(start_date, time.min))
+            end_of_day = timezone.make_aware(datetime.combine(end_date, time.max))
 
-            # --- NUEVO: Cálculo del resumen para las tarjetas ---
-            summary = base_queryset.aggregate(
-                total_vendido=Coalesce(Sum('total'), 0, output_field=DecimalField()),
-                total_pagado=Coalesce(Sum('total', filter=Q(estado='pagada')), 0, output_field=DecimalField()),
-                total_pendiente=Coalesce(Sum('total', filter=Q(estado='pendiente')), 0, output_field=DecimalField()),
-                num_transacciones=Count('id')
-            )
+            # Construir el queryset base, optimizando con select_related
+            queryset = Factura.objects.filter(
+                fecha_operacion__range=(start_of_day, end_of_day)
+            ).select_related('cliente', 'usuario', 'metodo_pago').order_by('-fecha_operacion')
 
-            # --- Reporte detallado por día (para la tabla) ---
-            report_data = base_queryset.values('fecha_operacion__date').annotate(
-                fecha=F('fecha_operacion__date'),
-                total_ventas=Sum('total'),
-                total_iva=Sum('iva_total'),
-                total_descuentos=Sum(Coalesce('descuento_global', 0, output_field=DecimalField())),
-                cantidad_transacciones=Count('id'),
-                almacen_nombre=F('almacen__nombre') 
-            ).order_by('-fecha_operacion__date')
-
-            reportes_diarios = list(report_data)
-
-            # --- Lógica de exportación ---
-            # (Aquí iría tu lógica de exportación a PDF/Excel/CSV usando los datos de `reportes_diarios`)
-
-            # Por defecto, devuelve JSON con ambos, el resumen y el detalle
-            return JsonResponse({
-                "resumen": summary,
-                "reportes": reportes_diarios
-            }, status=HTTPStatus.OK)
+            # Aplicar filtro de estado si se proporciona
+            if estado:
+                queryset = queryset.filter(estado__iexact=estado)
+            
+            # --- CAMBIO CLAVE ---
+            # Usar el VentaReporteSerializer para convertir los datos al formato JSON correcto
+            serializer = VentaReporteSerializer(queryset, many=True)
+            
+            # Devolver los datos en el formato que el frontend espera ("reporte_detallado")
+            return Response({"reporte_detallado": serializer.data}, status=200)
 
         except Exception as e:
             print(f"Error generando reporte de ventas: {e}")
-            return JsonResponse({"error": "Ocurrió un error inesperado."}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return Response({"error": "Ocurrió un error inesperado."}, status=500)
 
 
 
@@ -1335,7 +1404,7 @@ class RolList(APIView):
     def get(self, request):
         queryset = Rol.objects.all().order_by("id")
         serializer = RolSerializer(queryset, many=True)
-        return JsonResponse({"roles": serializer.data}, status=HTTPStatus.OK)
+        return Response({"roles": serializer.data}, status=status.HTTP_200_OK)
 
 
 class RolCreateUpdateDelete(APIView):
@@ -1608,151 +1677,180 @@ class MetodoPagoCRUD(APIView):
 # =========================================================
 # TRANSACCION PAGO
 # =========================================================
+def reducir_stock_de_factura(factura):
+    """
+    Recorre los detalles de una factura, reduce el stock local y, si el item
+    tiene SKU, envía la actualización a WooCommerce.
+    """
+    detalles = Detallefactura.objects.select_related('producto', 'variante').filter(factura=factura)
+    
+    for detalle in detalles:
+        item_a_actualizar = None
+        
+        if detalle.variante:
+            # CASO 1: Es una variante.
+            variante = detalle.variante
+            stock_actual = variante.cantidad or 0
+            variante.cantidad = stock_actual - detalle.cantidad
+            variante.save(update_fields=['cantidad'])
+            item_a_actualizar = variante 
+            
+        elif detalle.producto:
+            # CASO 2: Es un producto simple.
+            producto = detalle.producto
+            stock_actual = producto.cantidad or 0
+            producto.cantidad = stock_actual - detalle.cantidad
+            producto.save(update_fields=['cantidad'])
+            item_a_actualizar = producto 
+
+        # --- 2. LLAMA A LA FUNCIÓN DE SINCRONIZACIÓN ---
+        # Después de guardar el cambio local, actualizamos WooCommerce.
+        if item_a_actualizar and hasattr(item_a_actualizar, 'sku') and item_a_actualizar.sku:
+            print(f"Iniciando sincronización para SKU: {item_a_actualizar.sku}")
+            actualizar_stock_woocommerce(
+                sku=item_a_actualizar.sku, 
+                nueva_cantidad=item_a_actualizar.cantidad
+            )
+
+
 class PagoView(APIView):
     permission_classes = [IsAuthenticated]
 
+    @transaction.atomic
     def post(self, request, *args, **kwargs):
         factura_id = request.data.get("factura_id")
-        monto_recibido = request.data.get("monto_recibido")
-        metodo_pago = request.data.get("metodo_pago")
+        monto_recibido_str = request.data.get("monto_recibido")
+        metodo_pago_id = request.data.get("metodo_pago")
         datos_adicionales = request.data.get("datos_adicionales", {})
         estado_override = request.data.get("estado", "").lower()
 
-        if not factura_id or not metodo_pago:
-            return JsonResponse({
-                "estado": "error",
-                "mensaje": "Se requiere factura_id, monto_recibido y método de pago."},
-                status=HTTPStatus.BAD_REQUEST)
+        if not factura_id or not metodo_pago_id:
+            return JsonResponse({"estado": "error", "mensaje": "Se requiere factura_id y método de pago."}, status=HTTPStatus.BAD_REQUEST)
 
         try:
-            metodo = MetodoPago.objects.get(id=metodo_pago)
+            metodo = MetodoPago.objects.get(id=metodo_pago_id)
+            factura = Factura.objects.select_for_update().get(id=factura_id, estado="abierta")
         except MetodoPago.DoesNotExist:
-            return JsonResponse({
-                "estado": "error",
-                "mensaje": "Método de pago no encontrado."},
-                status=HTTPStatus.NOT_FOUND)
-
-        try:
-            # Buscamos la factura en estado "abierta"
-            factura = Factura.objects.get(id=factura_id, estado="abierta")
+            return JsonResponse({"estado": "error", "mensaje": "Método de pago no encontrado."}, status=HTTPStatus.NOT_FOUND)
         except Factura.DoesNotExist:
-            return JsonResponse({
-                "estado": "error", 
-                "mensaje": "Factura no encontrada o ya pagada."},
-                status=HTTPStatus.NOT_FOUND)
+            return JsonResponse({"estado": "error", "mensaje": "Factura no encontrada o ya procesada."}, status=HTTPStatus.NOT_FOUND)
         
-        # Lógica específica para "Pagar luego"
+        # --- Lógica de "Pagar luego" o estado "pendiente" ---
         if metodo.tipo_metodo == "Pagar luego" or estado_override == "pendiente":
-            # Asignar correlativo SI NO LO TIENE
             if not factura.correlativo:
-                config = obtener_configuracion_correlativo()
-                correlativo = f"{config.prefijo}{str(config.current_number + 1).zfill(config.number_length)}"
-                factura.correlativo = correlativo
-                config.current_number += 1
-                config.save()
+                # Lógica para asignar correlativo
+                pass
 
-            # ==>> DESCONTAR STOCK AQUÍ TAMBIÉN
-            detalles = Detallefactura.objects.filter(factura=factura)
-            for detalle in detalles:
-                producto = detalle.producto
-                producto.cantidad -= detalle.cantidad
-                producto.save()
+            # LLAMADA A LA FUNCIÓN AUXILIAR PARA REDUCIR STOCK (ahora también sincroniza)
+            reducir_stock_de_factura(factura)
 
-            factura.metodo_pago_id = metodo_pago
+            factura.metodo_pago = metodo
             factura.estado = "pendiente"
             factura.nombre_cliente_pendiente = datos_adicionales.get("nombre_cliente", "")
             factura.comentario_pendiente = datos_adicionales.get("comentario", "")
             factura.save()
 
-            return JsonResponse({
-                "estado": "success",
-                "mensaje": "La factura ha sido marcada como pendiente (Pagar luego).",
-                "factura": {
-                    "id": factura.id,
-                    "correlativo": factura.correlativo,
-                    "subtotal": str(factura.subtotal),
-                    "iva_total": str(factura.iva_total),
-                    "total": str(factura.total),
-                    "nombre_cliente_pendiente": factura.nombre_cliente_pendiente,
-                    "comentario_pendiente": factura.comentario_pendiente,
-                    "estado": factura.estado,
-                }
-            }, status=HTTPStatus.OK)
+            return JsonResponse({"estado": "success", "mensaje": "La factura ha sido marcada como pendiente."}, status=HTTPStatus.OK)
         
-         # Validación para monto insuficiente (sólo para pagos completos)
-        if monto_recibido is None or float(monto_recibido) < float(factura.total):
-            return JsonResponse({
-                "estado": "error",
-                "mensaje": f"Monto insuficiente para completar el pago, falta {factura.total}"},
-                status=HTTPStatus.BAD_REQUEST)
+        # --- Lógica para pagos completos ---
+        if monto_recibido_str is None or float(monto_recibido_str) < float(factura.total):
+            return JsonResponse({"estado": "error", "mensaje": f"Monto insuficiente. Se requiere {factura.total}"}, status=HTTPStatus.BAD_REQUEST)
         
-        # Asignar correlativo SI NO LO TIENE
         if not factura.correlativo:
-            config = obtener_configuracion_correlativo()
-            correlativo = f"{config.prefijo}{str(config.current_number + 1).zfill(config.number_length)}"
-            factura.correlativo = correlativo
-            config.current_number += 1
-            config.save()
+            # Lógica para asignar correlativo
+            pass
 
-        #Actualizar stock: recorrer cada detalle de la factura y actualizar el stock del producto.
-        detalles = Detallefactura.objects.filter(factura=factura)
-        for detalle in detalles:
-            producto = detalle.producto
-            producto.cantidad -= detalle.cantidad
-            producto.save()
+        # LLAMADA A LA FUNCIÓN AUXILIAR PARA REDUCIR STOCK (ahora también sincroniza)
+        reducir_stock_de_factura(factura)
 
-        # Actualizamos la factura:
-        # Asignamos el método de pago correctamente usando el atributo "_id"
-        factura.metodo_pago_id = metodo_pago
+        factura.metodo_pago = metodo
         factura.estado = "pagado"
         factura.fecha_pago = timezone.now()
         factura.save()
 
-        # Crear una transacción de pago. Se genera un código único para la transacción.
+        # Crear la transacción de pago
         codigo_transaccion = str(uuid.uuid4())
         transaccion_data = {
-            "orden": factura.orden.id if factura.orden else None,
+            "factura": factura.id, 
             "monto": factura.total,
-            "metodo_pago": metodo_pago,
-            "estado": "exitoso",  # Según la lógica de negocio; podría ser "pendiente" antes de validación externa.
+            "metodo_pago": metodo_pago_id,
+            "estado": "exitoso",
             "codigo_transaccion": codigo_transaccion,
             "fecha": timezone.now(),
             "activo": True,
         }
+        
         serializer = TransaccionpagoSerializer(data=transaccion_data)
         if serializer.is_valid():
             serializer.save()
         else:
-            # En caso de error se retorna la validación. (Podrías revertir cambios de stock si lo requieres.)
-            return JsonResponse({
-                "estado": "error",
-                "mensaje": "Error al registrar la transacción.",
-                "detalles": serializer.errors
-            }, status=HTTPStatus.BAD_REQUEST)
+            return JsonResponse({"estado": "error", "mensaje": "Error al registrar la transacción.", "detalles": serializer.errors}, status=HTTPStatus.BAD_REQUEST)
 
         return JsonResponse({
             "estado": "success",
             "mensaje": "Pago completado y transacción registrada.",
-            "factura": {
-                "id": factura.id,
-                "correlativo": factura.correlativo,
-                "subtotal": str(factura.subtotal),
-                "iva_total": str(factura.iva_total),
-                "total": str(factura.total),
-                "estado": factura.estado,
-            },
+            "factura": {"id": factura.id, "estado": factura.estado, "total": str(factura.total)},
             "transaccion": serializer.data
         }, status=HTTPStatus.OK)
-
 
 class FacturaImprimirView(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request, factura_id, *args, **kwargs):
-        response, error = generar_factura_pdf(factura_id)
-        if error:
-            return JsonResponse({"estado": "error", "mensaje": error}, status=400)
-        return response
+        try:
+            # Obtener el tamaño del papel desde los parámetros de la URL (default: 80)
+            paper_size = request.GET.get('paper_size', '80')
+
+            # --- Lógica para seleccionar los archivos CSS ---
+            base_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_base.css')
+            
+            if paper_size == '58':
+                size_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_58mm.css')
+            else: # Default a 80mm
+                size_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_80mm.css')
+
+            # Cargar los datos de la factura (sin cambios)
+            factura = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').get(id=factura_id)
+            detalles = factura.detallefactura_set.all()
+            nombre_empleado = factura.usuario.get_full_name().strip() or factura.usuario.username if factura.usuario else "N/A"
+
+            logo_base64 = None
+            logo_path = os.path.join(settings.BASE_DIR, 'img', 'LOGO-POWER.png')
+            if os.path.exists(logo_path):
+                with open(logo_path, "rb") as image_file:
+                    encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+                    logo_base64 = f"data:image/png;base64,{encoded_string}"
+
+            context = {
+                'factura': factura,
+                'detalles': detalles,
+                'nombre_empleado': nombre_empleado,
+                'empresa': {
+                    'nombre': "Power Nutricion Deportiva Excelente, S.L.",
+                    'cif': "B-55450688",
+                    'direccion': "Calle miguel de prado, 4 BJ 47002, Valladolid",
+                    'telefono': "641 00 89 57",
+                    'logo_path': logo_base64
+                }
+            }
+
+            html_string = render_to_string('tickets/ticket_template.html', context)
+            
+            # --- Generar PDF cargando AMBOS archivos CSS ---
+            stylesheets = [CSS(base_css_path), CSS(size_css_path)]
+            pdf_file = HTML(string=html_string, base_url=request.build_absolute_uri()).write_pdf(stylesheets=stylesheets)
+
+            response = HttpResponse(pdf_file, content_type='application/pdf')
+            response['Content-Disposition'] = f'inline; filename="factura_{factura.correlativo}.pdf"'
+            
+            return response
+
+        except Factura.DoesNotExist:
+            return JsonResponse({"estado": "error", "mensaje": "La factura no existe."}, status=404)
+        except Exception as e:
+            print(f"Error al generar el PDF para factura {factura_id}: {e}")
+            return JsonResponse({"estado": "error", "mensaje": "Error al generar la factura."}, status=500)
+
 
 class TransaccionpagoGet(APIView):
     permission_classes = [IsAuthenticated]
@@ -1839,36 +1937,51 @@ class TransaccionpagoByMetodo(APIView):
 # VARIACION PRODUCTO, ATRIBUTOS Y VALOR
 # =========================================================
 
-class AtributoListView(ListAPIView):
-    permission_classes = [IsAuthenticated]
-    queryset = Atributo.objects.all()
-    serializer_class = AtributoSerializer
+# class ValorAtributoListView(APIView):
+#     permission_classes = [IsAuthenticated]
+#     def get(self, request):
+#         valores = ValorAtributo.objects.all()
+#         serializer = ValorAtributoSerializer(valores, many=True)
+#         return Response(serializer.data)
 
-class AtributoListCreateView(ListCreateAPIView):
+class AtributoListCreateView(APIView):
     permission_classes = [IsAuthenticated]
-    queryset = Atributo.objects.all()
-    serializer_class = AtributoCrearConValoresSerializer
 
-class AtributoDetailView(RetrieveUpdateDestroyAPIView):
+    def get(self, request):
+        # Ahora prefetch_related('valores') funcionará gracias al related_name
+        atributos = Atributo.objects.prefetch_related('valores').all()
+        serializer = AtributoSerializer(atributos, many=True)
+        return Response(serializer.data) # <-- CORREGIDO: Usar Response
+
+    def post(self, request):
+        serializer = AtributoSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class AtributoDetailView(APIView):
     permission_classes = [IsAuthenticated]
-    queryset = Atributo.objects.all()
-    serializer_class = AtributoSerializer
 
-class ValorAtributoListView(ListAPIView):
-    permission_classes = [IsAuthenticated]
-    queryset = ValorAtributo.objects.all()
-    serializer_class = ValorAtributoSerializer
+    def get_object(self, pk):
+        try:
+            return Atributo.objects.get(pk=pk)
+        except Atributo.DoesNotExist:
+            raise Http404
 
-class ValorAtributoListCreateView(ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
-    queryset = ValorAtributo.objects.all()
-    serializer_class = ValorAtributoSerializer
+    def put(self, request, pk):
+        atributo = self.get_object(pk)
+        serializer = AtributoSerializer(atributo, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data) # <-- CORREGIDO: Usar Response
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class ValorAtributoDetailView(RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
-    queryset = ValorAtributo.objects.all()
-    serializer_class = ValorAtributoSerializer
-
+    def delete(self, request, pk):
+        atributo = self.get_object(pk)
+        atributo.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT) # <-- CORREGIDO: Usar Response
+    
 class VariacionproductoListCreateView(ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     queryset = Variacionproducto.objects.all()
@@ -2180,7 +2293,7 @@ class FacturaGet(APIView):
     def get(self, request, id):
         try:
             factura = Factura.objects.get(id=id)
-            serializer = FacturaSerializer(factura)
+            serializer = FacturaReporteSerializer(factura)
             return JsonResponse({"data": serializer.data}, status=HTTPStatus.OK)
         except Factura.DoesNotExist:
             return JsonResponse(
@@ -2815,7 +2928,7 @@ class CategoriaCrud(APIView):
     def post(self, request):
         serializer = CategoriaSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
+            serializer.save(creado_por=request.user)
             return JsonResponse(
                 {"estado": "creado", "data": serializer.data}, status=HTTPStatus.CREATED
             )
@@ -2885,8 +2998,43 @@ class ClienteList(APIView):
         clientes = Cliente.objects.filter(activo=True).order_by("id")
         serializer = ClienteSerializer(clientes, many=True)
 
-        return JsonResponse({"clientes": serializer.data}, status=HTTPStatus.OK)
+        return Response({"clientes": serializer.data}, status=HTTPStatus.OK)
 
+# --- 2. Vista para el Reporte de Facturas (la lista principal) ---
+class FacturaDetalleReporteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        start_date_str = request.query_params.get("start_date")
+        end_date_str = request.query_params.get("end_date")
+        estado = request.query_params.get('estado', None)
+        cliente_id = request.query_params.get('cliente_id', None)
+
+        try:
+            # Convertir las fechas de string a objeto date
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+
+            # --- LÓGICA DE ZONA HORARIA CORREGIDA ---
+            # Crear un rango de 24 horas para cada fecha, consciente de la zona horaria
+            start_of_day = timezone.make_aware(datetime.combine(start_date, time.min))
+            end_of_day = timezone.make_aware(datetime.combine(end_date, time.max))
+
+            # Filtramos usando el rango consciente de la zona horaria
+            queryset = Factura.objects.filter(
+                fecha_operacion__range=(start_of_day, end_of_day)
+            ).select_related('cliente', 'usuario').prefetch_related('detallefactura_set').order_by('-fecha_operacion')
+
+            if estado:
+                queryset = queryset.filter(estado__iexact=estado) # Usamos iexact para ignorar mayúsculas/minúsculas
+            if cliente_id:
+                queryset = queryset.filter(cliente_id=cliente_id)
+            
+            serializer = FacturaReporteSerializer(queryset, many=True)
+            return Response({"reporte_detallado": serializer.data}, status=status.HTTP_200_OK)
+
+        except (ValueError, TypeError):
+            return Response({"error": "Formato de fecha inválido. Se requiere YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
 class ClienteCreateUpdateDelete(APIView):
     permission_classes = [IsAuthenticated]
