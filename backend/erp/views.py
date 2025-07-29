@@ -1,5 +1,5 @@
 from django.shortcuts import render
-from datetime import timedelta
+from datetime import timedelta, date, time
 from .models import *
 from django.contrib.auth.hashers import check_password
 from django.db import transaction
@@ -8,13 +8,17 @@ from decimal import Decimal, ROUND_HALF_UP
 from rest_framework.generics import ListCreateAPIView, RetrieveUpdateDestroyAPIView,ListAPIView
 import csv
 import os
+from rest_framework.response import Response
 import re
+import base64
 from datetime import datetime
+from django.http import Http404
 import uuid
+from weasyprint import HTML, CSS
+from django.template.loader import render_to_string
 from rest_framework.decorators import api_view
 #from django.views.decorators.csrf import csrf_exempt
 #from django.utils.decorators import method_decorator
-from .utils.factura_pdf import generar_factura_pdf
 from django.http.response import JsonResponse, HttpResponse
 from django.db.models import Sum, Count, F, DecimalField, Q
 from django.db.models.functions import Coalesce
@@ -32,6 +36,7 @@ from openpyxl.drawing.image import Image
 from reportlab.lib.units import inch
 from reportlab.lib import colors
 from openpyxl import Workbook
+from .woocommerce_sync import actualizar_stock_woocommerce
 from openpyxl.styles import Font, Alignment
 from rest_framework import generics, permissions
 from .serializers import (
@@ -55,7 +60,6 @@ from .serializers import (
     ProveedorSerializer,
     ReporteclienteSerializer,
     ReporteinventarioSerializer,
-    ReporteventaSerializer,
     ReservastockSerializer,
     RolSerializer,
     SesionusuarioSerializer,
@@ -65,7 +69,12 @@ from .serializers import (
     ConfiguracionCorrelativoReadSerializer,
     ConfiguracionCorrelativoWriteSerializer,
     MetodoPagoSerializer,AtributoSerializer,
-    ValorAtributoSerializer, AtributoCrearConValoresSerializer, UserMetadataCreateSerializer, MyTokenObtainPairSerializer, FacturaReporteSerializer
+    ValorAtributoSerializer, AtributoCrearConValoresSerializer, 
+    UserMetadataCreateSerializer, MyTokenObtainPairSerializer, 
+    FacturaReporteSerializer, UserDetailSerializer, AsistenciaSerializer,
+    HorarioSerializer, DiaFestivoSerializer,
+    FacturaReportSerializer, VentaReporteSerializer,
+    InventarioItemSerializer
 )
 from django.contrib.auth import authenticate, get_user_model
 from rest_framework.permissions import BasePermission
@@ -90,9 +99,7 @@ class MyTokenObtainPairView(TokenObtainPairView):
 
 
 class DashboardDataView(APIView):
-    """
-    Recopila y calcula todos los datos necesarios para el dashboard principal.
-    """
+
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
@@ -104,7 +111,7 @@ class DashboardDataView(APIView):
         base_queryset = Factura.objects.filter(fecha_operacion__date__range=[start_date_str, end_date_str])
         ventas_queryset = base_queryset.exclude(estado__iexact='cancelada')
 
-        # --- 2. CÁLCULO PARA LAS TARJETAS DE RESUMEN (CORREGIDO) ---
+        # --- 2. CÁLCULO PARA LAS TARJETAS DE RESUMEN (Tu código ya era correcto aquí) ---
         resumen_ventas = ventas_queryset.aggregate(
             total_vendido=Coalesce(Sum('total'), Decimal('0.0')),
             total_pagado=Coalesce(Sum('total', filter=Q(estado__iexact='pagado')), Decimal('0.0')),
@@ -112,23 +119,35 @@ class DashboardDataView(APIView):
             num_transacciones=Count('id')
         )
 
-        # --- 3. CÁLCULO PARA EL GRÁFICO DE VENTAS DIARIAS ---
-        ventas_por_dia = ventas_queryset.values('fecha_operacion__date').annotate(total=Sum('total')).order_by('fecha_operacion__date')
+        # --- 3. CÁLCULO PARA EL GRÁFICO DE VENTAS DIARIAS (CORREGIDO Y MEJORADO) ---
+        ventas_por_dia_qs = ventas_queryset.values('fecha_operacion__date').annotate(
+            total=Coalesce(Sum('total'), Decimal('0.0'))
+        ).order_by('fecha_operacion__date')
+
+        # Creamos un diccionario para mapear las ventas por fecha
+        sales_map = {item['fecha_operacion__date']: item['total'] for item in ventas_por_dia_qs}
+
+        # Generamos un rango completo de fechas para el gráfico
+        start_date_obj = date.fromisoformat(start_date_str)
+        end_date_obj = date.fromisoformat(end_date_str)
+        all_dates = [start_date_obj + timedelta(days=i) for i in range((end_date_obj - start_date_obj).days + 1)]
+
         grafico_ventas = {
-            'labels': [v['fecha_operacion__date'].strftime('%d/%m') for v in ventas_por_dia],
-            'data': [v['total'] for v in ventas_por_dia]
+            'labels': [d.strftime('%d/%m') for d in all_dates],
+            'data': [sales_map.get(d, Decimal('0.0')) for d in all_dates] # Usamos 0 para días sin ventas
         }
 
-        # --- 4. PRODUCTOS MÁS VENDIDOS (CON IMAGEN) ---
+        # --- 4. PRODUCTOS MÁS VENDIDOS (CORREGIDO) ---
         productos_mas_vendidos_qs = Detallefactura.objects.filter(factura__in=ventas_queryset) \
             .values('producto__nombre', 'variante__nombre', 'producto__imagen') \
-            .annotate(cantidad_total=Sum('cantidad')).order_by('-cantidad_total')[:5]
+            .annotate(
+                cantidad_total=Coalesce(Sum('cantidad'), 0) # Usamos Coalesce para evitar nulls
+            ).order_by('-cantidad_total')[:5]
         
         productos_mas_vendidos = []
         for p in productos_mas_vendidos_qs:
             imagen_url = None
             if p.get('producto__imagen'):
-                # Construye la URL completa si es necesario
                 imagen_url = request.build_absolute_uri(settings.MEDIA_URL + p['producto__imagen'])
             
             productos_mas_vendidos.append({
@@ -137,32 +156,34 @@ class DashboardDataView(APIView):
                 'imagen': imagen_url
             })
 
-        # --- 5. PRODUCTOS CON BAJO STOCK (CON IMAGEN) ---
+        # --- 5. PRODUCTOS CON BAJO STOCK (Tu código ya era correcto aquí) ---
         productos_bajo_stock_qs = Producto.objects.filter(cantidad__lt=10, activo=True).order_by('cantidad')[:5]
         productos_bajo_stock = []
         for p in productos_bajo_stock_qs:
-             imagen_url = p.imagen.url if p.imagen else None
-             productos_bajo_stock.append({'nombre': p.nombre, 'cantidad': p.cantidad or 0, 'imagen': imagen_url})
+            imagen_url = p.imagen.url if p.imagen else None
+            productos_bajo_stock.append({'nombre': p.nombre, 'cantidad': p.cantidad or 0, 'imagen': imagen_url})
         
-        # --- 6. TOP CATEGORÍAS ---
+        # --- 6. TOP CATEGORÍAS (CORREGIDO) ---
         top_categorias_qs = Detallefactura.objects.filter(factura__in=ventas_queryset) \
             .values('producto__categoria__nombre') \
-            .annotate(total_vendido=Sum('total_linea')) \
+            .annotate(
+                total_vendido=Coalesce(Sum('total_linea'), Decimal('0.0')) # Usamos Coalesce
+            ) \
             .order_by('-total_vendido')[:3]
         
         top_categorias = {
-            'labels': [c['producto__categoria__nombre'] for c in top_categorias_qs],
-            'data': [float(c['total_vendido']) for c in top_categorias_qs]
+            'labels': [c['producto__categoria__nombre'] for c in top_categorias_qs if c['producto__categoria__nombre']],
+            'data': [float(c['total_vendido']) for c in top_categorias_qs if c['producto__categoria__nombre']]
         }
         
-        # --- 7. INFORMACIÓN GENERAL ---
+        # --- 7. INFORMACIÓN GENERAL (Tu código ya era correcto aquí) ---
         info_general = {
             'clientes': Cliente.objects.filter(activo=True).count(),
             'productos': Producto.objects.filter(activo=True).count(),
             'ordenes_periodo': ventas_queryset.count()
         }
         
-        # --- 8. DATOS DEL USUARIO ---
+        # --- 8. DATOS DEL USUARIO (Tu código ya era correcto aquí) ---
         user_nombre = "Admin"
         if request.user.is_authenticated:
             user_nombre = request.user.get_full_name() or request.user.username
@@ -182,32 +203,32 @@ class DashboardDataView(APIView):
 
 
 class UserMetadataListCreateView(generics.ListCreateAPIView):
-    permission_classes = [IsAuthenticated, IsAdmin]
-    queryset = UserMetadata.objects.all()
-
+    permission_classes = [permissions.IsAdminUser] # Solo los admins pueden ver y crear
+    
     def get_serializer_class(self):
+        # Usa el serializer de creación para peticiones POST
         if self.request.method == 'POST':
             return UserMetadataCreateSerializer
+        # Usa el serializer de visualización para peticiones GET
         return UserMetadataSerializer
 
     def get_queryset(self):
-        queryset = super().get_queryset()
+        # Filtra por el estado 'is_active' del usuario relacionado
+        queryset = UserMetadata.objects.select_related('user', 'rol','almacen_asignado').all()
         estado = self.request.query_params.get('es_activo')
         if estado is not None:
-            if estado.lower() in ['true', '1']:
-                queryset = queryset.filter(es_activo=True)
-            elif estado.lower() in ['false', '0']:
-                queryset = queryset.filter(es_activo=False)
+            es_activo_bool = estado.lower() in ['true', '1']
+            queryset = queryset.filter(user__is_active=es_activo_bool)
         return queryset
 
     def create(self, request, *args, **kwargs):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        # Usa el serializer de solo lectura para la respuesta
-        read_serializer = UserMetadataSerializer(serializer.instance, context={'request': request})
-        headers = self.get_success_headers(serializer.data)
-        return JsonResponse(read_serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+        instance = serializer.save()
+        
+        # Devuelve la respuesta usando el serializer de visualización para mostrar el objeto completo
+        read_serializer = UserMetadataSerializer(instance, context={'request': request})
+        return Response(read_serializer.data, status=status.HTTP_201_CREATED)
 
 class UserMetadataDetailView(generics.RetrieveUpdateDestroyAPIView):
     queryset = UserMetadata.objects.all()
@@ -216,12 +237,176 @@ class UserMetadataDetailView(generics.RetrieveUpdateDestroyAPIView):
 
     def destroy(self, request, *args, **kwargs):
         instance = self.get_object()
-        if instance.es_activo:
+        # Ahora comprueba el estado en el modelo User
+        if instance.user.is_active:
             return Response(
-                {"detail": "No puedes eliminar un usuario activo. Inactívalo primero."},
+                {"detail": "No puedes eliminar un perfil de un usuario activo. Inactívalo primero."},
                 status=status.HTTP_400_BAD_REQUEST
             )
+        # Si el usuario no está activo, se puede eliminar el perfil
         return super().destroy(request, *args, **kwargs)
+
+# --- Vistas de Gestión para Administradores ---
+class HorarioDetailView(APIView):
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+
+    def get(self, request, pk=1):
+        # Intenta obtener el horario con pk=1, si no existe, devuelve 404
+        try:
+            horario = Horario.objects.get(pk=pk)
+            serializer = HorarioSerializer(horario)
+            return Response(serializer.data)
+        except Horario.DoesNotExist:
+            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+
+    def put(self, request, pk=1):
+        # Usa update_or_create para actualizar el horario con pk=1 o crearlo si no existe
+        horario, created = Horario.objects.update_or_create(
+            pk=pk,
+            defaults=request.data
+        )
+        serializer = HorarioSerializer(horario)
+        # Decide el código de estado: 201 si fue creado, 200 si fue actualizado
+        status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
+        return Response(serializer.data, status=status_code)
+
+# Vista para LISTAR y CREAR días festivos.
+class DiaFestivoListView(generics.ListCreateAPIView):
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    queryset = DiaFestivo.objects.all().order_by('fecha') # Devuelve ordenado por fecha
+    serializer_class = DiaFestivoSerializer
+
+# Vista para ELIMINAR un día festivo específico.
+class DiaFestivoDetailView(generics.DestroyAPIView):
+    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    queryset = DiaFestivo.objects.all()
+    serializer_class = DiaFestivoSerializer
+
+# --- Vistas de Asistencia (Modificadas) ---
+class UserMeView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        serializer = UserDetailSerializer(request.user)
+        return Response(serializer.data)
+
+class AttendanceSummaryView(APIView):
+    permission_classes = [IsAuthenticated]
+    def get(self, request):
+        today = timezone.localdate()
+        start_of_month = today.replace(day=1)
+        
+        asistencia_hoy = Asistencia.objects.filter(usuario=request.user, fecha=today).first()
+        current_status = asistencia_hoy.estado_actual if asistencia_hoy else 'out'
+
+        asistencias_mes = Asistencia.objects.filter(usuario=request.user, fecha__range=[start_of_month, today])
+        festivos_mes = DiaFestivo.objects.filter(fecha__range=[start_of_month, today]).count()
+
+        summary = {
+            "total_working_days": 22,
+            "absent_days": asistencias_mes.filter(estado='Ausente').count(),
+            "present_days": asistencias_mes.filter(estado='Presente').count(),
+            "half_days": asistencias_mes.filter(estado='Medio Día').count(),
+            "late_days": asistencias_mes.filter(llegada_tarde=True).count(),
+            "holidays": festivos_mes,
+        }
+
+        log_serializer = AsistenciaSerializer(asistencias_mes, many=True)
+        data = {"current_status": current_status, "summary": summary, "log": log_serializer.data}
+        return Response(data)
+
+class ClockInView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        now = timezone.now()
+        local_date = timezone.localdate()
+        horario = Horario.objects.first()
+        es_tarde = False
+        if horario:
+            hora_entrada_limite = datetime.combine(now.date(), horario.hora_entrada_oficial)
+            hora_entrada_limite = timezone.make_aware(hora_entrada_limite)
+            limite_con_margen = hora_entrada_limite + timedelta(minutes=horario.margen_tardanza_minutos)
+            if now > limite_con_margen:
+                es_tarde = True
+
+        asistencia, created = Asistencia.objects.get_or_create(
+            usuario=request.user,
+            fecha=local_date,
+            defaults={'hora_entrada': now, 'estado_actual': 'in', 'llegada_tarde': es_tarde}
+        )
+        if not created:
+            asistencia.hora_entrada = now
+            asistencia.estado_actual = 'in'
+            asistencia.llegada_tarde = es_tarde
+            asistencia.save()
+        return Response(status=status.HTTP_200_OK)
+
+class ClockOutView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        Asistencia.objects.filter(usuario=request.user, fecha=timezone.localdate()).update(
+            hora_salida=timezone.now(),
+            estado_actual='out'
+        )
+        return Response(status=status.HTTP_200_OK)
+
+class BreakView(APIView):
+    permission_classes = [IsAuthenticated]
+    def post(self, request):
+        start_break = request.data.get('start', True)
+        asistencia = Asistencia.objects.get(usuario=request.user, fecha=timezone.localdate())
+        
+        if start_break:
+            Descanso.objects.create(asistencia=asistencia, inicio_descanso=timezone.now())
+            asistencia.estado_actual = 'break'
+        else:
+            ultimo_descanso = asistencia.descansos.filter(fin_descanso__isnull=True).last()
+            if ultimo_descanso:
+                ultimo_descanso.fin_descanso = timezone.now()
+                ultimo_descanso.save()
+            asistencia.estado_actual = 'in'
+        asistencia.save()
+        return Response(status=status.HTTP_200_OK)
+
+
+class CashClosingReportView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        date_str = request.query_params.get('date', None)
+
+        if date_str:
+            try:
+                target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+            except ValueError:
+                return Response({"error": "Formato de fecha inválido. Usar YYYY-MM-DD."}, status=400)
+        else:
+            # Usa la fecha actual en la zona horaria local del servidor
+            target_date = timezone.localdate()
+
+        # --- LÓGICA DE FECHA CORREGIDA ---
+        # Crea el inicio y el fin del día para la fecha seleccionada
+        start_of_day = datetime.combine(target_date, time.min)
+        end_of_day = datetime.combine(target_date, time.max)
+
+        # Convierte estas fechas a la zona horaria activa de Django
+        # (Asegúrate de tener TIME_ZONE = 'America/Caracas' en settings.py)
+        start_of_day_aware = timezone.make_aware(start_of_day)
+        end_of_day_aware = timezone.make_aware(end_of_day)
+
+        # Filtra las facturas cuyo timestamp (en UTC) esté dentro de ese rango de 24h locales
+        queryset = Factura.objects.filter(
+            fecha_operacion__range=(start_of_day_aware, end_of_day_aware),
+            estado='pagado'  # <-- Doble chequea que este sea el estado correcto
+        ).order_by('fecha_operacion')
+
+        serializer = FacturaReportSerializer(queryset, many=True)
+
+        data = {
+            "report_date": target_date,
+            "transactions": serializer.data,
+        }
+
+        return Response(data)
 
 
 # Productos por id
@@ -229,11 +414,11 @@ class ProductoGet(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request, id):
         try:
-            data = Producto.objects.get(id=id)
-            serializer = ProductoSerializer(data)
-            return JsonResponse({"data": serializer.data}, status=HTTPStatus.OK)
+            data = Producto.objects.filter(id=id, activo=True)
+            serializer = ProductoSerializer(data, many=True)
+            return Response({"data": serializer.data}, status=HTTPStatus.OK)
         except Exception as e:
-            return JsonResponse(
+            return Response(
                 {"estado": "error", "mensaje": "Productos no encontrados"},
                 status=HTTPStatus.NOT_FOUND,
             )
@@ -274,14 +459,21 @@ class ProductoCreateUpdateDelete(APIView):
             return JsonResponse({"estado": "actualizado", "data": serializer.data}, status=HTTPStatus.OK)
         return JsonResponse({"estado": "error", "mensaje": serializer.errors}, status=HTTPStatus.BAD_REQUEST)
 
-    def delete(self, request, id):
-        # Tu método delete está bien, lo mantenemos como está.
+    def delete(self, request, pk, *args, **kwargs):
         try:
-            producto = Producto.objects.get(id=id)
-            producto.delete() # O producto.activo = False, como prefieras
-            return JsonResponse({"estado": "eliminado", "mensaje": "Producto eliminado"}, status=HTTPStatus.OK)
+            producto = Producto.objects.get(pk=pk)
+            
+            # En lugar de borrar, lo desactivamos
+            producto.activo = False
+            producto.save()
+            
+            return Response({"mensaje": "Producto desactivado correctamente."}, status=status.HTTP_200_OK)
+        
         except Producto.DoesNotExist:
-            return JsonResponse({"estado": "error", "mensaje": "Producto no encontrado"}, status=HTTPStatus.NOT_FOUND)
+            return Response({"error": "El producto no existe."}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            # Aquí capturamos el IntegrityError si ocurriera por otra razón
+            return Response({"error": f"No se pudo desactivar el producto: {str(e)}"}, status=status.HTTP_400_BAD_REQUEST)
 
 
 # ==============
@@ -407,9 +599,9 @@ def recalcular_y_guardar_factura(factura):
 def agg_producto_a_orden(request, cliente_id, barcode, cantidad=1, descuento_linea=None, eliminar=False):
     """
     Agrega, actualiza o elimina un producto/variante de una factura activa.
-    Ahora recibe el 'request' para identificar al usuario.
+    Asigna el usuario que crea la factura por primera vez.
     """
-    # 1. Búsqueda del producto (esta lógica se mantiene igual)
+    # 1. Búsqueda del producto (esta lógica está bien y se mantiene)
     producto_base = None
     variante_encontrada = None
     precio_final = Decimal("0.00")
@@ -428,15 +620,12 @@ def agg_producto_a_orden(request, cliente_id, barcode, cantidad=1, descuento_lin
         except Producto.DoesNotExist:
             return None, "Producto no encontrado para este código."
 
-    # --- CAMBIO CLAVE: Se usa request.user para buscar y crear la factura ---
-    # 2. Obtener o crear factura para el usuario logueado
     factura, created = Factura.objects.get_or_create(
         cliente_id=cliente_id, 
         estado="abierta", 
         fecha_operacion__date=timezone.now().date(),
-        usuario=request.user,  # Busca facturas abiertas de este usuario para hoy
         defaults={
-            'usuario': request.user, # Asigna el usuario si se crea una nueva
+            'usuario': request.user, # Asigna el usuario que está logueado si se crea una nueva
             'fecha_operacion': timezone.now(), 
             'metodo_pago': None, 
             'subtotal': Decimal("0.00"), 
@@ -447,7 +636,6 @@ def agg_producto_a_orden(request, cliente_id, barcode, cantidad=1, descuento_lin
         }
     )
     
-    # 3. Lógica de detalle (esta lógica se mantiene igual)
     filtro_detalle = {'factura': factura, 'producto': producto_base}
     if variante_encontrada:
         filtro_detalle['variante'] = variante_encontrada
@@ -476,7 +664,6 @@ def agg_producto_a_orden(request, cliente_id, barcode, cantidad=1, descuento_lin
                 subtotal_linea=Decimal("0.00"), iva_linea=Decimal("0.00"), total_linea=Decimal("0.00")
             )
 
-    # 4. LLAMAR A LA FUNCIÓN DE RECÁLCULO
     recalcular_y_guardar_factura(factura)
 
     return factura, None
@@ -1016,266 +1203,109 @@ class ReporteclienteView(APIView):
         return JsonResponse({"reportes": serializer.data}, status=HTTPStatus.OK)
 
 
-class ReporteinventarioView(APIView):
+class InventarioActualView(APIView):
     """
-    Vista para listar y exportar el reporte de inventario.
-    Filtra por rango de fechas y soporta exportación.
+    Vista para obtener un reporte de inventario en tiempo real,
+    con opción de filtrar por categoría.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        start_date = request.query_params.get("start_date")
-        end_date = request.query_params.get("end_date")
-        export_format = request.query_params.get('export', None)
-        
-        queryset = Reporteinventario.objects.all()
-        if start_date and end_date:
+        categoria_id = request.query_params.get('categoria_id', None)
+
+        # Obtener productos simples y variantes que deben estar en el inventario
+        productos_simples = Producto.objects.filter(activo=True, tipo='simple')
+        variantes = Variacionproducto.objects.select_related('producto__categoria').filter(producto__activo=True)
+
+        if categoria_id:
             try:
-                queryset = queryset.filter(fecha__range=(start_date, end_date))
+                # Filtrar ambos querysets por el ID de la categoría
+                productos_simples = productos_simples.filter(categoria_id=categoria_id)
+                variantes = variantes.filter(producto__categoria_id=categoria_id)
             except ValueError:
-                return JsonResponse({"error": "Formato de fecha inválido"}, status=HTTPStatus.BAD_REQUEST)
+                return Response({"error": "ID de categoría inválido."}, status=400)
+
+        # Unificar los datos en una sola lista con una estructura consistente
+        inventario_unificado = []
+        for producto in productos_simples:
+            inventario_unificado.append({
+                'id': f"p-{producto.id}",
+                'nombre': producto.nombre,
+                'categoria': producto.categoria.nombre if producto.categoria else 'Sin Categoría',
+                'codigo_barras': producto.codigo_barras,
+                'cantidad': producto.cantidad or 0
+            })
         
-        queryset = queryset.order_by("-fecha", "producto__nombre")
-        headers = ["Fecha", "Producto", "Almacen", "Stock Inicial", "Stock Final", "Movimientos"]
+        for variante in variantes:
+            inventario_unificado.append({
+                'id': f"v-{variante.id}",
+                'nombre': f"{variante.producto.nombre} - {variante.nombre}",
+                'categoria': variante.producto.categoria.nombre if variante.producto.categoria else 'Sin Categoría',
+                'codigo_barras': variante.codigo_barras,
+                'cantidad': variante.cantidad or 0
+            })
 
-        if export_format == 'pdf':
-            return generar_pdf(queryset, headers, "Reporte de Inventario")
-            
-        if export_format == 'excel':
-            return generar_excel(queryset, headers, "Reporte de Inventario")
-
-        if export_format == 'csv':
-            response = HttpResponse(content_type="text/csv")
-            response["Content-Disposition"] = 'attachment; filename="reporte_inventario.csv"'
-            writer = csv.writer(response)
-            writer.writerow(headers)
-            for reporte in queryset:
-                writer.writerow([
-                    reporte.fecha,
-                    reporte.producto,
-                    reporte.almacen,
-                    reporte.stock_inicial,
-                    reporte.stock_final,
-                    reporte.movimientos,
-                ])
-            return response
-            
-        serializer = ReporteinventarioSerializer(queryset, many=True)
-        return JsonResponse({"reportes": serializer.data}, status=HTTPStatus.OK)
-
-
-class FacturaDetalleReporteView(APIView):
-    """
-    Genera un listado DETALLADO de cada factura individual en un rango de fechas.
-    Soporta exportación a PDF y Excel con cabecera, logo, orden y nombres de archivo correctos.
-    """
-    permission_classes = [IsAuthenticated]
-
-    def _generar_pdf(self, queryset, start_date_str, end_date_str):
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = f"reporte_facturas_{timestamp}.pdf"
-        response = HttpResponse(content_type='application/pdf')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-
-        p = canvas.Canvas(response, pagesize=landscape(letter))
-        width, height = landscape(letter)
+        # Ordenar la lista final alfabéticamente por nombre
+        inventario_ordenado = sorted(inventario_unificado, key=lambda item: item['nombre'])
         
-        logo_path = os.path.join(settings.BASE_DIR, 'img', 'logo-power.jpg')
-        if os.path.exists(logo_path):
-            p.drawImage(logo_path, inch, height - 1.5*inch, width=1.5*inch, preserveAspectRatio=True, mask='auto')
+        # Serializar los datos usando el serializer genérico
+        serializer = InventarioItemSerializer(inventario_ordenado, many=True)
         
-        p.setFont("Helvetica-Bold", 14)
-        p.drawRightString(width - inch, height - inch, "Reporte de Facturas Detallado")
-        p.setFont("Helvetica", 12)
-        p.drawRightString(width - inch, height - 1.25*inch, f"Periodo: {start_date_str} a {end_date_str}")
-        
-        # CORREGIDO: Añadimos "Creado por" a las cabeceras
-        headers = ["# Factura", "Fecha", "Cliente", "Creado por", "Estado", "Método de Pago", "Total"]
-        y = height - 2 * inch
-        # CORREGIDO: Ajustamos las posiciones para la nueva columna
-        x_positions = [inch, 2.2*inch, 3.7*inch, 5.2*inch, 6.5*inch, 7.8*inch, 9.5*inch]
+        # Obtener todas las categorías para el filtro del frontend (solo se hace una vez)
+        categorias_data = []
+        if not categoria_id: # Para no enviarlas en cada filtro
+             categorias = Categoriaproducto.objects.filter(activo=True).order_by('nombre')
+             categorias_data = CategoriaSerializer(categorias, many=True).data
 
-        p.setFont("Helvetica-Bold", 10)
-        for i, header in enumerate(headers):
-            p.drawString(x_positions[i], y, header)
-        y -= 20
-
-        p.setFont("Helvetica", 9)
-        for factura in queryset:
-            if y < inch: # Salto de página
-                p.showPage()
-                y = height - inch
-                # Re-dibujar cabecera
-                if os.path.exists(logo_path):
-                    p.drawImage(logo_path, inch, height - 1.5*inch, width=1.5*inch, preserveAspectRatio=True, mask='auto')
-                p.setFont("Helvetica-Bold", 10)
-                for i, header in enumerate(headers):
-                    p.drawString(x_positions[i], y, header)
-                y -= 20
-                p.setFont("Helvetica", 9)
-
-            total_str = f"{factura.total:.2f} €"
-            
-            # CORREGIDO: Añadimos el nombre del usuario a la fila de datos
-            data_row = [
-                factura.correlativo or str(factura.id),
-                factura.fecha_operacion.strftime('%d/%m/%Y %H:%M'),
-                str(factura.cliente) if factura.cliente else 'N/A',
-                factura.usuario.username if factura.usuario else 'N/A', # <-- NUEVO
-                factura.estado,
-                str(factura.metodo_pago) if factura.metodo_pago else 'N/A',
-                total_str
-            ]
-            for i, item in enumerate(data_row):
-                p.drawString(x_positions[i], y, item)
-            y -= 15
-        
-        p.showPage()
-        p.save()
-        return response
-
-    def _generar_excel(self, queryset, start_date_str, end_date_str):
-        timestamp = datetime.now().strftime('%Y-%m-%d_%H-%M-%S')
-        filename = f"reporte_facturas_{timestamp}.xlsx"
-        response = HttpResponse(content_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
-        response['Content-Disposition'] = f'attachment; filename="{filename}"'
-
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Reporte de Facturas"
-        
-        logo_path = os.path.join(settings.BASE_DIR, 'img', 'logo-power.jpg')
-        if os.path.exists(logo_path):
-            img = Image(logo_path)
-            img.height = 75
-            img.width = 150
-            ws.add_image(img, 'A1')
-
-        title_cell = ws['D2']
-        title_cell.value = "Reporte de Facturas Detallado"
-        title_cell.font = Font(size=16, bold=True)
-        title_cell.alignment = Alignment(horizontal="center")
-        ws.merge_cells('D2:G2')
-
-        date_cell = ws['D3']
-        date_cell.value = f"Periodo: {start_date_str} a {end_date_str}"
-        date_cell.font = Font(size=12)
-        date_cell.alignment = Alignment(horizontal="center")
-        ws.merge_cells('D3:G3')
-        
-        # CORREGIDO: Añadimos "Creado por" a las cabeceras
-        headers = ["# Factura", "Fecha", "Cliente", "Creado por", "Estado", "Método de Pago", "Total"]
-        
-        for col_num, header in enumerate(headers, 1):
-            cell = ws.cell(row=5, column=col_num, value=header)
-            cell.font = Font(bold=True)
-            ws.column_dimensions[chr(64 + col_num)].width = 30
-
-        for row_num, factura in enumerate(queryset, 6):
-            # CORREGIDO: Añadimos la columna del usuario y ajustamos las demás
-            ws.cell(row=row_num, column=1, value=factura.correlativo or str(factura.id))
-            ws.cell(row=row_num, column=2, value=factura.fecha_operacion.strftime('%d/%m/%Y %H:%M'))
-            ws.cell(row=row_num, column=3, value=str(factura.cliente) if factura.cliente else 'N/A')
-            ws.cell(row=row_num, column=4, value=factura.usuario.username if factura.usuario else 'N/A') # <-- NUEVO
-            ws.cell(row=row_num, column=5, value=factura.estado)
-            ws.cell(row=row_num, column=6, value=str(factura.metodo_pago) if factura.metodo_pago else 'N/A')
-            total_cell = ws.cell(row=row_num, column=7, value=factura.total)
-            total_cell.number_format = '#,##0.00" €"'
-
-        wb.save(response)
-        return response
-
-    def get(self, request):
-        start_date_str = request.query_params.get("start_date")
-        end_date_str = request.query_params.get("end_date")
-        estado = request.query_params.get('estado', None)
-        cliente_id = request.query_params.get('cliente_id', None) # Añadido para consistencia
-        export_format = request.query_params.get('export', None)
-
-        if not start_date_str or not end_date_str:
-            return JsonResponse({"error": "Se requieren start_date y end_date"}, status=HTTPStatus.BAD_REQUEST)
-
-        try:
-            # CORREGIDO: Añadimos 'usuario' a select_related para optimizar la consulta
-            queryset = Factura.objects.filter(
-                fecha_operacion__date__range=[start_date_str, end_date_str]
-            ).select_related('cliente', 'almacen', 'metodo_pago', 'usuario').order_by('-fecha_operacion')
-
-            if estado:
-                queryset = queryset.filter(estado=estado)
-            if cliente_id:
-                queryset = queryset.filter(cliente_id=cliente_id)
-            
-            if export_format == 'pdf':
-                return self._generar_pdf(queryset, start_date_str, end_date_str)
-            if export_format == 'excel':
-                return self._generar_excel(queryset, start_date_str, end_date_str)
-            
-            serializer = FacturaReporteSerializer(queryset, many=True)
-            return JsonResponse({"reporte_detallado": serializer.data}, status=HTTPStatus.OK)
-
-        except Exception as e:
-            print(f"Error generando reporte detallado de facturas: {e}")
-            return JsonResponse({"error": "Ocurrió un error inesperado."}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
-
-
+        return Response({
+            "inventario": serializer.data,
+            "categorias": categorias_data
+        })
 
 
 class ReporteventaView(APIView):
     """
-    Genera un reporte de ventas dinámico con un resumen de totales.
-    Calcula los datos directamente desde las facturas.
+    Genera un reporte detallado de ventas para el frontend.
+    Esta vista devuelve una lista de facturas individuales usando un serializer optimizado
+    que no incluye los detalles de los productos.
     """
     permission_classes = [IsAuthenticated]
     
     def get(self, request):
         start_date_str = request.query_params.get("start_date")
         end_date_str = request.query_params.get("end_date")
-        export_format = request.query_params.get('export', None)
+        estado = request.query_params.get('estado', None)
 
         if not start_date_str or not end_date_str:
-            return JsonResponse({"error": "Se requieren start_date y end_date"}, status=HTTPStatus.BAD_REQUEST)
+            return Response({"error": "Se requieren start_date y end_date"}, status=400)
 
         try:
-            # Filtro base para las facturas que cuentan como ventas
-            allowed_estados = ["cerrada", "pagada", "pendiente"]
-            base_queryset = Factura.objects.filter(
-                fecha_operacion__date__range=[start_date_str, end_date_str],
-                estado__in=allowed_estados
-            )
+            # Convertir las fechas de string a objeto datetime consciente de la zona horaria
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+            
+            start_of_day = timezone.make_aware(datetime.combine(start_date, time.min))
+            end_of_day = timezone.make_aware(datetime.combine(end_date, time.max))
 
-            # --- NUEVO: Cálculo del resumen para las tarjetas ---
-            summary = base_queryset.aggregate(
-                total_vendido=Coalesce(Sum('total'), 0, output_field=DecimalField()),
-                total_pagado=Coalesce(Sum('total', filter=Q(estado='pagada')), 0, output_field=DecimalField()),
-                total_pendiente=Coalesce(Sum('total', filter=Q(estado='pendiente')), 0, output_field=DecimalField()),
-                num_transacciones=Count('id')
-            )
+            # Construir el queryset base, optimizando con select_related
+            queryset = Factura.objects.filter(
+                fecha_operacion__range=(start_of_day, end_of_day)
+            ).select_related('cliente', 'usuario', 'metodo_pago').order_by('-fecha_operacion')
 
-            # --- Reporte detallado por día (para la tabla) ---
-            report_data = base_queryset.values('fecha_operacion__date').annotate(
-                fecha=F('fecha_operacion__date'),
-                total_ventas=Sum('total'),
-                total_iva=Sum('iva_total'),
-                total_descuentos=Sum(Coalesce('descuento_global', 0, output_field=DecimalField())),
-                cantidad_transacciones=Count('id'),
-                almacen_nombre=F('almacen__nombre') 
-            ).order_by('-fecha_operacion__date')
-
-            reportes_diarios = list(report_data)
-
-            # --- Lógica de exportación ---
-            # (Aquí iría tu lógica de exportación a PDF/Excel/CSV usando los datos de `reportes_diarios`)
-
-            # Por defecto, devuelve JSON con ambos, el resumen y el detalle
-            return JsonResponse({
-                "resumen": summary,
-                "reportes": reportes_diarios
-            }, status=HTTPStatus.OK)
+            # Aplicar filtro de estado si se proporciona
+            if estado:
+                queryset = queryset.filter(estado__iexact=estado)
+            
+            # --- CAMBIO CLAVE ---
+            # Usar el VentaReporteSerializer para convertir los datos al formato JSON correcto
+            serializer = VentaReporteSerializer(queryset, many=True)
+            
+            # Devolver los datos en el formato que el frontend espera ("reporte_detallado")
+            return Response({"reporte_detallado": serializer.data}, status=200)
 
         except Exception as e:
             print(f"Error generando reporte de ventas: {e}")
-            return JsonResponse({"error": "Ocurrió un error inesperado."}, status=HTTPStatus.INTERNAL_SERVER_ERROR)
+            return Response({"error": "Ocurrió un error inesperado."}, status=500)
 
 
 
@@ -1374,7 +1404,7 @@ class RolList(APIView):
     def get(self, request):
         queryset = Rol.objects.all().order_by("id")
         serializer = RolSerializer(queryset, many=True)
-        return JsonResponse({"roles": serializer.data}, status=HTTPStatus.OK)
+        return Response({"roles": serializer.data}, status=status.HTTP_200_OK)
 
 
 class RolCreateUpdateDelete(APIView):
@@ -1649,33 +1679,44 @@ class MetodoPagoCRUD(APIView):
 # =========================================================
 def reducir_stock_de_factura(factura):
     """
-    Recorre los detalles de una factura y reduce el stock del item correspondiente,
-    diferenciando entre productos simples y variantes.
+    Recorre los detalles de una factura, reduce el stock local y, si el item
+    tiene SKU, envía la actualización a WooCommerce.
     """
-    # Usamos select_related para hacer la consulta más eficiente
     detalles = Detallefactura.objects.select_related('producto', 'variante').filter(factura=factura)
     
     for detalle in detalles:
+        item_a_actualizar = None
+        
         if detalle.variante:
-            # CASO 1: Es una variante. Se reduce el stock de la variante.
+            # CASO 1: Es una variante.
             variante = detalle.variante
-            # Usamos 'or 0' como medida de seguridad por si el stock es None
             stock_actual = variante.cantidad or 0
             variante.cantidad = stock_actual - detalle.cantidad
             variante.save(update_fields=['cantidad'])
+            item_a_actualizar = variante 
+            
         elif detalle.producto:
-            # CASO 2: Es un producto simple. Se reduce el stock del producto.
+            # CASO 2: Es un producto simple.
             producto = detalle.producto
-            # Usamos 'or 0' aquí también por seguridad.
             stock_actual = producto.cantidad or 0
             producto.cantidad = stock_actual - detalle.cantidad
             producto.save(update_fields=['cantidad'])
+            item_a_actualizar = producto 
 
-# --- VISTA DE PAGO COMPLETA Y CORREGIDA ---
+        # --- 2. LLAMA A LA FUNCIÓN DE SINCRONIZACIÓN ---
+        # Después de guardar el cambio local, actualizamos WooCommerce.
+        if item_a_actualizar and hasattr(item_a_actualizar, 'sku') and item_a_actualizar.sku:
+            print(f"Iniciando sincronización para SKU: {item_a_actualizar.sku}")
+            actualizar_stock_woocommerce(
+                sku=item_a_actualizar.sku, 
+                nueva_cantidad=item_a_actualizar.cantidad
+            )
+
+
 class PagoView(APIView):
     permission_classes = [IsAuthenticated]
 
-    @transaction.atomic # Agregado para asegurar que toda la operación sea atómica
+    @transaction.atomic
     def post(self, request, *args, **kwargs):
         factura_id = request.data.get("factura_id")
         monto_recibido_str = request.data.get("monto_recibido")
@@ -1697,12 +1738,10 @@ class PagoView(APIView):
         # --- Lógica de "Pagar luego" o estado "pendiente" ---
         if metodo.tipo_metodo == "Pagar luego" or estado_override == "pendiente":
             if not factura.correlativo:
-                # Aquí va tu lógica para asignar el correlativo
-                # config = obtener_configuracion_correlativo()
-                # ... etc ...
+                # Lógica para asignar correlativo
                 pass
 
-            # LLAMADA A LA FUNCIÓN AUXILIAR PARA REDUCIR STOCK
+            # LLAMADA A LA FUNCIÓN AUXILIAR PARA REDUCIR STOCK (ahora también sincroniza)
             reducir_stock_de_factura(factura)
 
             factura.metodo_pago = metodo
@@ -1718,12 +1757,10 @@ class PagoView(APIView):
             return JsonResponse({"estado": "error", "mensaje": f"Monto insuficiente. Se requiere {factura.total}"}, status=HTTPStatus.BAD_REQUEST)
         
         if not factura.correlativo:
-            # Aquí va tu lógica para asignar el correlativo
-            # config = obtener_configuracion_correlativo()
-            # ... etc ...
+            # Lógica para asignar correlativo
             pass
 
-        # LLAMADA A LA FUNCIÓN AUXILIAR PARA REDUCIR STOCK
+        # LLAMADA A LA FUNCIÓN AUXILIAR PARA REDUCIR STOCK (ahora también sincroniza)
         reducir_stock_de_factura(factura)
 
         factura.metodo_pago = metodo
@@ -1734,7 +1771,6 @@ class PagoView(APIView):
         # Crear la transacción de pago
         codigo_transaccion = str(uuid.uuid4())
         transaccion_data = {
-            # Ajusta esto si el campo se llama diferente en tu modelo Transaccionpago
             "factura": factura.id, 
             "monto": factura.total,
             "metodo_pago": metodo_pago_id,
@@ -1748,7 +1784,6 @@ class PagoView(APIView):
         if serializer.is_valid():
             serializer.save()
         else:
-            # Como la operación es atómica, si esto falla, todo se revierte (incluido el stock)
             return JsonResponse({"estado": "error", "mensaje": "Error al registrar la transacción.", "detalles": serializer.errors}, status=HTTPStatus.BAD_REQUEST)
 
         return JsonResponse({
@@ -1758,15 +1793,64 @@ class PagoView(APIView):
             "transaccion": serializer.data
         }, status=HTTPStatus.OK)
 
-
 class FacturaImprimirView(APIView):
-    #permission_classes = [IsAuthenticated]
+    permission_classes = [IsAuthenticated]
 
     def get(self, request, factura_id, *args, **kwargs):
-        response, error = generar_factura_pdf(factura_id)
-        if error:
-            return JsonResponse({"estado": "error", "mensaje": error}, status=400)
-        return response
+        try:
+            # Obtener el tamaño del papel desde los parámetros de la URL (default: 80)
+            paper_size = request.GET.get('paper_size', '80')
+
+            # --- Lógica para seleccionar los archivos CSS ---
+            base_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_base.css')
+            
+            if paper_size == '58':
+                size_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_58mm.css')
+            else: # Default a 80mm
+                size_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_80mm.css')
+
+            # Cargar los datos de la factura (sin cambios)
+            factura = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').get(id=factura_id)
+            detalles = factura.detallefactura_set.all()
+            nombre_empleado = factura.usuario.get_full_name().strip() or factura.usuario.username if factura.usuario else "N/A"
+
+            logo_base64 = None
+            logo_path = os.path.join(settings.BASE_DIR, 'img', 'LOGO-POWER.png')
+            if os.path.exists(logo_path):
+                with open(logo_path, "rb") as image_file:
+                    encoded_string = base64.b64encode(image_file.read()).decode('utf-8')
+                    logo_base64 = f"data:image/png;base64,{encoded_string}"
+
+            context = {
+                'factura': factura,
+                'detalles': detalles,
+                'nombre_empleado': nombre_empleado,
+                'empresa': {
+                    'nombre': "Power Nutricion Deportiva Excelente, S.L.",
+                    'cif': "B-55450688",
+                    'direccion': "Calle miguel de prado, 4 BJ 47002, Valladolid",
+                    'telefono': "641 00 89 57",
+                    'logo_path': logo_base64
+                }
+            }
+
+            html_string = render_to_string('tickets/ticket_template.html', context)
+            
+            # --- Generar PDF cargando AMBOS archivos CSS ---
+            stylesheets = [CSS(base_css_path), CSS(size_css_path)]
+            pdf_file = HTML(string=html_string, base_url=request.build_absolute_uri()).write_pdf(stylesheets=stylesheets)
+
+            response = HttpResponse(pdf_file, content_type='application/pdf')
+            response['Content-Disposition'] = f'inline; filename="factura_{factura.correlativo}.pdf"'
+            
+            return response
+
+        except Factura.DoesNotExist:
+            return JsonResponse({"estado": "error", "mensaje": "La factura no existe."}, status=404)
+        except Exception as e:
+            print(f"Error al generar el PDF para factura {factura_id}: {e}")
+            return JsonResponse({"estado": "error", "mensaje": "Error al generar la factura."}, status=500)
+
 
 class TransaccionpagoGet(APIView):
     permission_classes = [IsAuthenticated]
@@ -1853,36 +1937,51 @@ class TransaccionpagoByMetodo(APIView):
 # VARIACION PRODUCTO, ATRIBUTOS Y VALOR
 # =========================================================
 
-class AtributoListView(ListAPIView):
-    permission_classes = [IsAuthenticated]
-    queryset = Atributo.objects.all()
-    serializer_class = AtributoSerializer
+# class ValorAtributoListView(APIView):
+#     permission_classes = [IsAuthenticated]
+#     def get(self, request):
+#         valores = ValorAtributo.objects.all()
+#         serializer = ValorAtributoSerializer(valores, many=True)
+#         return Response(serializer.data)
 
-class AtributoListCreateView(ListCreateAPIView):
+class AtributoListCreateView(APIView):
     permission_classes = [IsAuthenticated]
-    queryset = Atributo.objects.all()
-    serializer_class = AtributoCrearConValoresSerializer
 
-class AtributoDetailView(RetrieveUpdateDestroyAPIView):
+    def get(self, request):
+        # Ahora prefetch_related('valores') funcionará gracias al related_name
+        atributos = Atributo.objects.prefetch_related('valores').all()
+        serializer = AtributoSerializer(atributos, many=True)
+        return Response(serializer.data) # <-- CORREGIDO: Usar Response
+
+    def post(self, request):
+        serializer = AtributoSerializer(data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class AtributoDetailView(APIView):
     permission_classes = [IsAuthenticated]
-    queryset = Atributo.objects.all()
-    serializer_class = AtributoSerializer
 
-class ValorAtributoListView(ListAPIView):
-    permission_classes = [IsAuthenticated]
-    queryset = ValorAtributo.objects.all()
-    serializer_class = ValorAtributoSerializer
+    def get_object(self, pk):
+        try:
+            return Atributo.objects.get(pk=pk)
+        except Atributo.DoesNotExist:
+            raise Http404
 
-class ValorAtributoListCreateView(ListCreateAPIView):
-    permission_classes = [IsAuthenticated]
-    queryset = ValorAtributo.objects.all()
-    serializer_class = ValorAtributoSerializer
+    def put(self, request, pk):
+        atributo = self.get_object(pk)
+        serializer = AtributoSerializer(atributo, data=request.data)
+        if serializer.is_valid():
+            serializer.save()
+            return Response(serializer.data) # <-- CORREGIDO: Usar Response
+        return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
 
-class ValorAtributoDetailView(RetrieveUpdateDestroyAPIView):
-    permission_classes = [IsAuthenticated]
-    queryset = ValorAtributo.objects.all()
-    serializer_class = ValorAtributoSerializer
-
+    def delete(self, request, pk):
+        atributo = self.get_object(pk)
+        atributo.delete()
+        return Response(status=status.HTTP_204_NO_CONTENT) # <-- CORREGIDO: Usar Response
+    
 class VariacionproductoListCreateView(ListCreateAPIView):
     permission_classes = [IsAuthenticated]
     queryset = Variacionproducto.objects.all()
@@ -2194,7 +2293,7 @@ class FacturaGet(APIView):
     def get(self, request, id):
         try:
             factura = Factura.objects.get(id=id)
-            serializer = FacturaSerializer(factura)
+            serializer = FacturaReporteSerializer(factura)
             return JsonResponse({"data": serializer.data}, status=HTTPStatus.OK)
         except Factura.DoesNotExist:
             return JsonResponse(
@@ -2829,7 +2928,7 @@ class CategoriaCrud(APIView):
     def post(self, request):
         serializer = CategoriaSerializer(data=request.data)
         if serializer.is_valid():
-            serializer.save()
+            serializer.save(creado_por=request.user)
             return JsonResponse(
                 {"estado": "creado", "data": serializer.data}, status=HTTPStatus.CREATED
             )
@@ -2899,8 +2998,43 @@ class ClienteList(APIView):
         clientes = Cliente.objects.filter(activo=True).order_by("id")
         serializer = ClienteSerializer(clientes, many=True)
 
-        return JsonResponse({"clientes": serializer.data}, status=HTTPStatus.OK)
+        return Response({"clientes": serializer.data}, status=HTTPStatus.OK)
 
+# --- 2. Vista para el Reporte de Facturas (la lista principal) ---
+class FacturaDetalleReporteView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        start_date_str = request.query_params.get("start_date")
+        end_date_str = request.query_params.get("end_date")
+        estado = request.query_params.get('estado', None)
+        cliente_id = request.query_params.get('cliente_id', None)
+
+        try:
+            # Convertir las fechas de string a objeto date
+            start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
+            end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
+
+            # --- LÓGICA DE ZONA HORARIA CORREGIDA ---
+            # Crear un rango de 24 horas para cada fecha, consciente de la zona horaria
+            start_of_day = timezone.make_aware(datetime.combine(start_date, time.min))
+            end_of_day = timezone.make_aware(datetime.combine(end_date, time.max))
+
+            # Filtramos usando el rango consciente de la zona horaria
+            queryset = Factura.objects.filter(
+                fecha_operacion__range=(start_of_day, end_of_day)
+            ).select_related('cliente', 'usuario').prefetch_related('detallefactura_set').order_by('-fecha_operacion')
+
+            if estado:
+                queryset = queryset.filter(estado__iexact=estado) # Usamos iexact para ignorar mayúsculas/minúsculas
+            if cliente_id:
+                queryset = queryset.filter(cliente_id=cliente_id)
+            
+            serializer = FacturaReporteSerializer(queryset, many=True)
+            return Response({"reporte_detallado": serializer.data}, status=status.HTTP_200_OK)
+
+        except (ValueError, TypeError):
+            return Response({"error": "Formato de fecha inválido. Se requiere YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
 class ClienteCreateUpdateDelete(APIView):
     permission_classes = [IsAuthenticated]

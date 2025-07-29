@@ -53,56 +53,58 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
             raise self.fail('no_active_account')
 
 
-class UserMetadataSerializer(serializers.ModelSerializer):
-    user = serializers.PrimaryKeyRelatedField(queryset=User.objects.all())
-    rol = serializers.CharField(source="rol.nombre", read_only=True)
-    tipo_documento = serializers.PrimaryKeyRelatedField(queryset=Tipodocumentofiscal.objects.all(), allow_null=True, required=False)
+# --- Serializer para MOSTRAR y ACTUALIZAR datos ---
+class UserSerializerForMetadata(serializers.ModelSerializer):
+    """Serializer anidado para mostrar datos del User."""
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'first_name', 'last_name', 'email', 'is_active']
+
+
+class UserSimpleSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = get_user_model()
+        fields = ['id', 'username']
+
+class EmpleadoSerializer(serializers.ModelSerializer):
+    nombre_completo = serializers.SerializerMethodField()
 
     class Meta:
-        model = UserMetadata
-        fields = '__all__'
-        read_only_fields = ['fecha_creacion', 'fecha_modificacion']
+        model = get_user_model()
+        fields = ['id', 'nombre_completo']
+
+    def get_nombre_completo(self, obj):
+        # Devuelve "Nombre Apellido" o el username si el nombre está en blanco
+        full_name = obj.get_full_name()
+        return full_name if full_name.strip() else obj.username
 
 
-class UserMetadataCreateSerializer(serializers.ModelSerializer):
-    usuario = serializers.CharField(write_only=True)
-    password = serializers.CharField(write_only=True)
-    correo = serializers.EmailField(write_only=True)
-    rol = serializers.PrimaryKeyRelatedField(queryset=Rol.objects.all(), required=False, allow_null=True)
-    tipo_documento = serializers.PrimaryKeyRelatedField(queryset=Tipodocumentofiscal.objects.all(), required=False, allow_null=True)
+# El nuevo serializador para el reporte de caja
+class FacturaReportSerializer(serializers.ModelSerializer):
+    # Renombramos 'usuario' a 'user' y usamos el serializador simple
+    user = UserSimpleSerializer(source='usuario', read_only=True)
+    
+    # Renombramos 'total' a 'amount' para que coincida con el frontend
+    amount = serializers.DecimalField(source='total', max_digits=10, decimal_places=2)
+    
+    # Obtenemos el nombre del método de pago directamente
+    payment_method = serializers.CharField(source='metodo_pago.nombre', read_only=True)
+    
+    # Renombramos 'fecha_operacion' a 'timestamp'
+    timestamp = serializers.DateTimeField(source='fecha_operacion')
+
+    # Como la factura siempre es un ingreso, añadimos el tipo manualmente
+    type = serializers.SerializerMethodField()
 
     class Meta:
-        model = UserMetadata
-        fields = [
-            'usuario', 'password', 'correo', 'rol', 'telefono', 'direccion',
-            'nombre', 'apellido', 'tipo_documento', 'numero_documento'
-        ]
+        model = Factura
+        # Lista de campos que el frontend necesita
+        fields = ['id', 'timestamp', 'user', 'payment_method', 'type', 'amount']
 
-    def validate_usuario(self, value):
-        # Checa si el username ya existe
-        if User.objects.filter(username=value).exists():
-            raise serializers.ValidationError("Ese nombre de usuario ya está en uso.")
-        return value
-
-    def create(self, validated_data):
-        username = validated_data.pop('usuario')
-        password = validated_data.pop('password')
-        email = validated_data.pop('correo')
-
-        # Garantiza unicidad de username (opcional, si quieres auto-incrementar)
-        original_username = username
-        counter = 1
-        while User.objects.filter(username=username).exists():
-            username = f"{original_username}{counter}"
-            counter += 1
-
-        user = User.objects.create_user(username=username, email=email, password=password)
-        validated_data['user'] = user
-        validated_data['correo'] = email
-        validated_data['verificado'] = True
-        # El campo correo puede o no ir en metadatos según tu modelo
-        return UserMetadata.objects.create(**validated_data)
-
+    def get_type(self, obj):
+        # Todas las facturas son consideradas 'Ingreso' para este reporte
+        return 'Ingreso'
+    
 class ConfiguracionCorrelativoReadSerializer(serializers.ModelSerializer):
     class Meta:
         model = ConfiguracionCorrelativo
@@ -171,11 +173,21 @@ class ReporteinventarioSerializer(serializers.ModelSerializer):
         fields = '__all__'
         depth = 1
 
-class ReporteventaSerializer(serializers.ModelSerializer):
+class VentaReporteSerializer(serializers.ModelSerializer):
+    # Usamos el EmpleadoSerializer para obtener el nombre completo
+    usuario = EmpleadoSerializer(read_only=True)
+    
+    # Usamos StringRelatedField para obtener los nombres directamente
+    cliente = serializers.StringRelatedField()
+    metodo_pago = serializers.CharField(source='metodo_pago.nombre', read_only=True)
+
     class Meta:
-        model = Reporteventa
-        fields = '__all__'
-        depth = 1
+        model = Factura
+        fields = [
+            'id', 'correlativo', 'fecha_operacion', 
+            'cliente', 'usuario', 'estado', 'total', 
+            'metodo_pago'
+        ]
 
 
 # ---------------------------------------------------------------------------
@@ -203,7 +215,7 @@ class ReservastockSerializer(serializers.ModelSerializer):
 class RolSerializer(serializers.ModelSerializer):
     class Meta:
         model = Rol
-        fields = '__all__'
+        fields = ['id', 'nombre']
 
 
 # ---------------------------------------------------------------------------
@@ -282,18 +294,6 @@ class TransaccionpagoSerializer(serializers.ModelSerializer):
         return value
 
 
-# ---------------------------------------------------------------------------
-# UserMetadata
-# tdf es tipo de documento fiscal ---------------------------------------------------------------------------
-class UserMetadataSerializer(serializers.ModelSerializer):
-    rol = RolSerializer(read_only=True)
-    tipo_documento = TipodocumentofiscalSerializer(read_only=True)
-    last_login = serializers.DateTimeField(source='user.last_login', read_only=True)
-    class Meta:
-        model = UserMetadata
-        fields = '__all__'
-
-
 class ValorAtributoSimpleSerializer(serializers.Serializer):
     valor = serializers.CharField()
 
@@ -313,18 +313,51 @@ class AtributoCrearConValoresSerializer(serializers.ModelSerializer):
             ValorAtributo.objects.create(atributo=atributo, valor=valor)
         return atributo
 
-class AtributoSerializer(serializers.ModelSerializer):
-    class Meta:
-        model = Atributo
-        fields = ['id', 'nombre']
-
 class ValorAtributoSerializer(serializers.ModelSerializer):
-    atributo = AtributoSerializer(read_only=True)
-    atributo_id = serializers.PrimaryKeyRelatedField(queryset=Atributo.objects.all(), source='atributo', write_only=True)
+    atributo_nombre = serializers.CharField(source='atributo.nombre', read_only=True)
     class Meta:
         model = ValorAtributo
-        fields = ['id', 'atributo', 'atributo_id', 'valor']
+        # El 'id' es opcional para diferenciar valores nuevos de existentes al editar
+        fields = ['id', 'valor','atributo_nombre']
+        extra_kwargs = {'id': {'read_only': False, 'required': False}}
 
+class AtributoSerializer(serializers.ModelSerializer):
+    # Usamos el serializer de valores para manejar la data anidada
+    valores = ValorAtributoSerializer(many=True)
+
+    class Meta:
+        model = Atributo
+        fields = ['id', 'nombre', 'valores']
+
+    def create(self, validated_data):
+        valores_data = validated_data.pop('valores', [])
+        atributo = Atributo.objects.create(**validated_data)
+        for valor_data in valores_data:
+            ValorAtributo.objects.create(atributo=atributo, **valor_data)
+        return atributo
+
+    def update(self, instance, validated_data):
+        valores_data = validated_data.pop('valores', [])
+        instance.nombre = validated_data.get('nombre', instance.nombre)
+        instance.save()
+
+        # Lógica para sincronizar los valores (crear, actualizar, eliminar)
+        valor_ids_existentes = {v.id for v in instance.valores.all()}
+        valor_ids_recibidos = {item.get('id') for item in valores_data if item.get('id')}
+
+        # 1. Eliminar valores que ya no se enviaron
+        ids_a_eliminar = valor_ids_existentes - valor_ids_recibidos
+        if ids_a_eliminar:
+            ValorAtributo.objects.filter(id__in=ids_a_eliminar).delete()
+
+        # 2. Actualizar valores existentes o crear nuevos
+        for valor_data in valores_data:
+            valor_id = valor_data.get('id')
+            if valor_id:
+                ValorAtributo.objects.filter(id=valor_id, atributo=instance).update(valor=valor_data.get('valor', ''))
+            else:
+                ValorAtributo.objects.create(atributo=instance, **valor_data)
+        return instance
 class VariacionproductoSerializer(serializers.ModelSerializer):
     """
     Serializer completo y corregido para Variantes.
@@ -453,60 +486,43 @@ class CupondescuentoSerializer(serializers.ModelSerializer):
 
 
 class DetallefacturaSerializer(serializers.ModelSerializer):
+    # Obtenemos el nombre del producto a través de la relación ForeignKey
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
+    
+    # Opcional: Si quieres mostrar también el nombre de la variante
+    variante_nombre = serializers.CharField(source='variante.nombre', read_only=True, allow_null=True)
+
     class Meta:
         model = Detallefactura
-        fields = '__all__'
-    
-    def validate_cantidad(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("La cantidad debe ser mayor que cero.")
-        return value
+        # Lista de campos que necesita el modal en el frontend
+        fields = [
+            'producto_nombre', 
+            'variante_nombre', 
+            'cantidad', 
+            'precio_unitario', 
+            'descuento', 
+            'total_linea'
+        ]
 
-    def validate_precio_unitario(self, value):
-        if value <= 0:
-            raise serializers.ValidationError("El precio unitario debe ser mayor que cero.")
-        return value
-
-    def validate(self, data):
-        # Supongamos que el subtotal_linea debería coincidir con:
-        # subtotal_linea = (cantidad * precio_unitario) - descuento (si es que hay)
-        cantidad = data.get('cantidad')
-        precio_unitario = data.get('precio_unitario')
-        descuento = data.get('descuento') or 0  # si no se envía, se asume 0
-        expected_subtotal = (cantidad * precio_unitario) - descuento
-        
-        subtotal_linea = data.get('subtotal_linea')
-        if subtotal_linea is not None and abs(subtotal_linea - expected_subtotal) > 0.01:
-            raise serializers.ValidationError(
-                "El subtotal de línea no coincide con la cantidad, precio unitario y descuento."
-            )
-        return data
-
-
-#Reportes Serializer
+# --- SERIALIZER PRINCIPAL PARA EL REPORTE (COMBINA TODO) ---
 class FacturaReporteSerializer(serializers.ModelSerializer):
-    cliente = serializers.StringRelatedField()
-    almacen = serializers.StringRelatedField()
-    metodo_pago = serializers.StringRelatedField()
-    creado_por_nombre = serializers.CharField(source='usuario.username', read_only=True, default='N/A')
+    # Anidamos los detalles usando la relación inversa ('detalles' es el related_name)
+    detalles = DetallefacturaSerializer(many=True, read_only=True, source='detallefactura_set')
+    
+    # Anidamos los datos del empleado
+    usuario = EmpleadoSerializer(read_only=True)
+    
+    # Obtenemos el nombre del cliente directamente de la relación
+    cliente = serializers.CharField(source='cliente.nombre', read_only=True, allow_null=True)
 
     class Meta:
         model = Factura
         fields = [
-            'id',
-            'correlativo',
-            'fecha_operacion',
-            'cliente',
-            'creado_por_nombre',
-            'estado',
-            'subtotal',
-            'descuento_global',
-            'iva_total',
-            'total',
-            'metodo_pago',
-            'almacen',
+            'id', 'correlativo', 'fecha_operacion', 
+            'cliente', 'usuario', 'estado', 'total', 
+            'subtotal', 'descuento_global', 'iva_total',
+            'detalles' # <-- Este campo ahora se llenará con los datos de DetalleFacturaSerializer
         ]
-
 
 class DetalleFacturaReporteSerializer(serializers.ModelSerializer):
     """Serializer para los productos dentro de una factura."""
@@ -663,29 +679,61 @@ class ProductoSerializer(serializers.ModelSerializer):
     variantes = VariacionproductoSerializer(many=True, required=False)
     categoria_nombre = serializers.CharField(source="categoria.nombre", read_only=True)
     almacen_nombre = serializers.CharField(source="almacen.nombre", read_only=True)
-    
-    # CAMBIO 1: Reemplazamos 'precio_con_iva' por 'base_imponible'
     base_imponible = serializers.SerializerMethodField()
 
     class Meta:
         model = Producto
-        # CAMBIO 2: Listamos los campos explícitamente para claridad
         fields = [
             'id', 'nombre', 'descripcion', 'precio', 'base_imponible', 'cantidad',
             'almacen', 'almacen_nombre', 'codigo_barras', 'disponible_online',
             'descuento', 'configuracion_iva', 'slug', 'peso', 'dimensiones',
-            'categoria', 'categoria_nombre', 'imagen', 'tipo', 'activo', 'variantes'
+            'categoria', 'categoria_nombre', 'imagen', 'tipo', 'activo', 'variantes',
+            'sku'  
         ]
+        
+        extra_kwargs = {
+            'peso': {
+                'required': False,
+                'allow_null': True
+            },
+            'dimensiones': {
+                'required': False,
+                'allow_null': True,
+                'allow_blank': True
+            },
+            # --- 2. CAMPO SKU CONFIGURADO COMO OPCIONAL ---
+            'sku': {
+                'required': False, 
+                'allow_null': True, 
+                'allow_blank': True
+            }
+        }
+
+    # --- 3. MÉTODO DE VALIDACIÓN PARA SKU ---
+    def validate_sku(self, value):
+        """
+        Asegura que el SKU, si se proporciona, sea único en la base de datos.
+        """
+        # Si el SKU está vacío o es nulo, es válido.
+        if not value:
+            return value
+        
+        # Busca si ya existe un producto con este SKU (ignorando mayúsculas/minúsculas).
+        qs = Producto.objects.filter(sku__iexact=value)
+        
+        # Si estamos actualizando un producto existente, lo excluimos de la búsqueda.
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+            
+        # Si después de la búsqueda aún existe algún producto, el SKU está duplicado.
+        if qs.exists():
+            raise serializers.ValidationError("Ya existe un producto con este SKU.")
+            
+        return value
 
     def get_base_imponible(self, obj):
-        """
-        Obtiene la base imponible usando la propiedad que definimos en el modelo.
-        Esto mantiene la lógica de negocio en el modelo, que es donde debe estar.
-        """
         return obj.base_imponible
 
-    # Mantenemos tus métodos para manejar los datos del formulario, ya que son necesarios
-    # para procesar el formato 'variantes[0][campo]'.
     def _extraer_variantes_data(self, initial_data):
         variantes_dict = {}
         for key, value in initial_data.items():
@@ -743,7 +791,6 @@ class ProductoSerializer(serializers.ModelSerializer):
 
     def to_representation(self, instance):
         data = super().to_representation(instance)
-        # Usamos la relación inversa correcta que definimos en el modelo
         variantes_qs = instance.variacionproducto_set.all()
         data['variantes'] = VariacionproductoSerializer(variantes_qs, many=True, context=self.context).data
         return data
@@ -779,7 +826,115 @@ class AlmacenSerializer(serializers.ModelSerializer):
     
     class Meta:
         model = Almacen
-        fields = "__all__"
+        fields = ["id","nombre", "direccion", "telefono", "estado",'activo']
+
+class UserMetadataSerializer(serializers.ModelSerializer):
+    # Usamos el serializer anidado para mostrar los datos del usuario en detalle
+    user = UserSerializerForMetadata(read_only=True)
+    rol = RolSerializer(read_only=True)
+    almacen_asignado = AlmacenSerializer(read_only=True)
+
+    class Meta:
+        model = UserMetadata
+        # Incluimos todos los campos del nuevo modelo
+        fields = [
+            'id', 'user', 'rol', 'telefono', 'direccion', 'fecha_nacimiento','numero_empleado', 
+            'foto_perfil', 'puesto', 'fecha_contratacion','almacen_asignado',
+            'almacen_asignado', 'notas_internas', 'fecha_creacion', 'fecha_modificacion'
+        ]
+
+# --- Serializer para CREAR un nuevo empleado (User + UserMetadata) ---
+class UserMetadataCreateSerializer(serializers.ModelSerializer):
+    # Campos del modelo User que se crearán
+    username = serializers.CharField(write_only=True)
+    password = serializers.CharField(write_only=True, style={'input_type': 'password'})
+    email = serializers.EmailField(write_only=True)
+    first_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    last_name = serializers.CharField(write_only=True, required=False, allow_blank=True)
+    rol = serializers.PrimaryKeyRelatedField(queryset=Rol.objects.all(), required=False, allow_null=True)
+    almacen_asignado = serializers.PrimaryKeyRelatedField(queryset=Almacen.objects.all(), required=False, allow_null=True)
+
+    class Meta:
+        model = UserMetadata
+        # Lista de todos los campos que el frontend enviará al crear
+        fields = [
+            'username', 'password', 'email', 'first_name', 'last_name', 'rol', 
+            'telefono', 'direccion', 'fecha_nacimiento', 'foto_perfil', 'puesto', 
+            'fecha_contratacion', 'almacen_asignado'
+        ]
+
+    def validate_username(self, value):
+        if User.objects.filter(username=value).exists():
+            raise serializers.ValidationError("Este nombre de usuario ya está en uso.")
+        return value
+
+    def validate_email(self, value):
+        if User.objects.filter(email=value).exists():
+            raise serializers.ValidationError("Este correo electrónico ya está en uso.")
+        return value
+
+    @transaction.atomic
+    def create(self, validated_data):
+        # 1. Extraer datos para el modelo User
+        user_data = {
+            'username': validated_data.pop('username'),
+            'password': validated_data.pop('password'),
+            'email': validated_data.pop('email'),
+            'first_name': validated_data.pop('first_name', ''),
+            'last_name': validated_data.pop('last_name', ''),
+        }
+        
+        # 2. Crear el objeto User
+        user = User.objects.create_user(**user_data)
+
+        # Busca el último UserMetadata por ID para obtener un número secuencial
+        last_metadata = UserMetadata.objects.all().order_by('id').last()
+        next_id = (last_metadata.id + 1) if last_metadata else 1
+        validated_data['numero_empleado'] = f"EMP-{str(next_id).zfill(4)}"
+        
+        # 3. Crear el objeto UserMetadata con los datos restantes
+        # y enlazarlo al User recién creado.
+        metadata = UserMetadata.objects.create(user=user, **validated_data)
+        
+        return metadata
+
+# Serializer para mostrar los datos del usuario logueado
+
+User = get_user_model()
+class UserDetailSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = [
+            'id', 
+            'username',
+            'first_name',
+            'last_name',
+            'email',
+            'is_staff']
+
+# Serializers para la asistencia
+class DescansoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Descanso
+        fields = ['inicio_descanso', 'fin_descanso']
+
+class AsistenciaSerializer(serializers.ModelSerializer):
+    descansos = DescansoSerializer(many=True, read_only=True)
+    
+    class Meta:
+        model = Asistencia
+        fields = ['fecha', 'estado', 'hora_entrada', 'hora_salida', 'descansos']
+
+
+class HorarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Horario
+        fields = '__all__'
+
+class DiaFestivoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = DiaFestivo
+        fields = '__all__'
 
 class InventarioSerializer(serializers.ModelSerializer):
     
@@ -812,6 +967,22 @@ class InventarioSerializer(serializers.ModelSerializer):
         depth=1  #Esto hará que los `ForeignKey` se expandan en la respuesta JSON
 
 
+class InventarioItemSerializer(serializers.Serializer):
+    """
+    Un serializer genérico para unificar productos y variantes en una sola estructura
+    para el reporte de inventario.
+    """
+    id = serializers.CharField()
+    nombre = serializers.CharField()
+    categoria = serializers.CharField()
+    codigo_barras = serializers.CharField()
+    cantidad = serializers.IntegerField()
+
+# Serializer simple para mostrar datos básicos del usuario
+class SimpleUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['username', 'first_name', 'last_name']
 
 
 class CategoriaSerializer(serializers.ModelSerializer):
@@ -824,6 +995,7 @@ class CategoriaSerializer(serializers.ModelSerializer):
         allow_null=True, 
         required=False
     )
+    creado_por = SimpleUserSerializer(read_only=True)
 
     def get_padre_nombre(self, obj):
         # Si existe un padre, devolvemos solamente su nombre; de lo contrario, retornamos un guión o None
@@ -893,41 +1065,49 @@ class CategoriaSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Categoriaproducto
-        fields = ['id', 'nombre', 'slug', 'activo', 'padre', 'padre_nombre']
+        fields = ['id', 'nombre', 'slug', 'activo', 'padre', 'padre_nombre','creado_por']
 
 
 
 class ClienteSerializer(serializers.ModelSerializer):
-	      
-    def validate(self, data):
-
-        campo_cliente = ["tipo_documento","documento","nombre","email","telefono","direccion"]
-
-        for campo in campo_cliente:
-             if not data.get(campo) or data.get(campo)==None:
-                  raise serializers.ValidationError({campo:f"El campo '{campo}' no puede estar vacio"})
-             
-        #Validaciones si existe el registro al mandar metodo post
-        if Cliente.objects.filter(documento=data.get("documento")).exists():
-            raise serializers.ValidationError({"mensaje":f"El documento ya existe"})
-        if Cliente.objects.filter(nombre=data.get("nombre")).exists():
-            raise serializers.ValidationError({"mensaje":f"El nombre ya existe"})    
-        if Cliente.objects.filter(email=data.get("email")).exists():
-            raise serializers.ValidationError({"mensaje":f"El email ya existe"}) 
-        
-        tipo_documento = {
-            "DNI":"Documento Nacional de Identidad",
-            "NIE":"Extranjeros",
-            "P":"Pasaporte"
-        }
-
-        if data.get("tipo_documento") not in tipo_documento.keys():
-            raise serializers.ValidationError({"mensaje":"El tipo de documento no es valido"})
-
-        return data
+    """
+    Serializer mejorado para el modelo Cliente.
+    - Define campos obligatorios y opcionales.
+    - Proporciona mensajes de error claros y específicos por campo.
+    """
     class Meta:
         model = Cliente
-        fields = "__all__"
+        fields = [
+            'id', 'tipo_documento', 'documento', 'nombre', 'email', 
+            'telefono', 'direccion', 'codigo_postal', 'provincia', 'fecha_registro'
+        ]
         
+        extra_kwargs = {
+            'email': {'required': False, 'allow_blank': True},
+            'direccion': {'required': False, 'allow_blank': True},
+            'codigo_postal': {'required': False, 'allow_blank': True},
+            'provincia': {'required': False, 'allow_blank': True},
+            'fecha_registro': {'read_only': True} # La fecha se debe gestionar automáticamente
+        }
+
+    def validate_documento(self, value):
+        # Busca si ya existe un cliente con este documento
+        qs = Cliente.objects.filter(documento__iexact=value)
+        # Si estamos actualizando, excluimos el cliente actual de la búsqueda
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Ya existe un cliente con este número de documento.")
+        return value
+
+    def validate_nombre(self, value):
+        # Busca si ya existe un cliente con este nombre
+        qs = Cliente.objects.filter(nombre__iexact=value)
+        if self.instance:
+            qs = qs.exclude(pk=self.instance.pk)
+        if qs.exists():
+            raise serializers.ValidationError("Ya existe un cliente con este nombre.")
+        return value
+
         
     
