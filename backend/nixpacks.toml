@@ -1,0 +1,9 @@
+# nixpacks.toml
+
+# Fase de instalación: define los paquetes de sistema (apt)
+[phases.setup]
+aptPkgs = ['libpango-1.0-0', 'libcairo2', 'libgdk-pixbuf-2.0-0']
+
+# Fase de inicio: define el comando para arrancar la aplicación
+[start]
+cmd = 'gunicorn backend.wsgi --bind 0.0.0.0:8000'
