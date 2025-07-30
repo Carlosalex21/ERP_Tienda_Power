@@ -73,9 +73,7 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
 ]
 
-CSRF_TRUSTED_ORIGINS = [
-    "http://localhost:8080",
-]
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:8080').split(',')
 
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 
