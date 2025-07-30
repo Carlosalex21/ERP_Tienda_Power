@@ -1,8 +1,0 @@
-# nixpacks.toml
-
-[phases.setup]
-# Lista de paquetes ajustada según la documentación de WeasyPrint
-aptPkgs = ['libpango-1.0-0', 'libcairo2', 'libgdk-pixbuf-2.0-0', 'libffi-dev', 'libpangocairo-1.0-0']
-
-[start]
-cmd = 'gunicorn backend.wsgi --bind 0.0.0.0:8000'
