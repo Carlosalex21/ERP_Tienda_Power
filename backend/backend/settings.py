@@ -1,6 +1,7 @@
 from pathlib import Path
 import os
 from datetime import timedelta
+import dj_database_url
 
 #Import dotenv
 from dotenv import load_dotenv # type: ignore
@@ -10,10 +11,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 
 SECRET_KEY = os.getenv("SECRET_KEY")
 
-# SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = True
+# En producción (Coolify), DEBUG será 'False'.
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-ALLOWED_HOSTS = []
+# En Coolify, pondrás tu dominio aquí, ej: "www.tusitio.com,tusitio.com"
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 
 SIMPLE_JWT = {
@@ -57,10 +59,8 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-CORS_ALLOWED_ORIGINS = [
-    "http://localhost:8080",
-    "http://127.0.0.1:8080",
-]
+CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:8080,http://127.0.0.1:8080').split(',')
+
 
 CORS_ALLOW_CREDENTIALS = True
 
@@ -103,15 +103,19 @@ WSGI_APPLICATION = "backend.wsgi.application"
 # Database
 # https://docs.djangoproject.com/en/5.1/ref/settings/#databases
 
-DATABASES = {
-    "default": {
-        "ENGINE": os.getenv("DATABASE_ENGINE"),
-        "NAME": os.getenv("DATABASE_SERVER"),
-        "USER": os.getenv("DATABASE_USER"),
-        "PASSWORD": os.getenv("DATABASE_PASSWORD"),
-        "PORT": os.getenv("DATABASE_PORT"),
+if 'DATABASE_URL' in os.environ:
+    # Si la variable DATABASE_URL existe (en producción/Coolify), usa PostgreSQL.
+    DATABASES = {
+        'default': dj_database_url.config(conn_max_age=600, ssl_require=False) # ssl_require=False es a menudo necesario para Coolify
     }
-}
+else:
+    # Si no, usa una base de datos SQLite3 (para desarrollo local en Windows).
+    DATABASES = {
+        'default': {
+            'ENGINE': 'django.db.backends.sqlite3',
+            'NAME': BASE_DIR / 'db.sqlite3', # La sintaxis con Path es más limpia
+        }
+    }
 
 
 # Password validation
@@ -148,10 +152,8 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
-BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-
 STATIC_URL = "static/"
-
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 # Configuración para archivos subidos (imágenes, media, etc.)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
@@ -163,9 +165,9 @@ DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 #Configuracion de Woocomerce para la conexion de inventarion con sistema 
 WOOCOMMERCE_CONFIG = {
-    "url": "https://powerexcelencia.es",  # <-- REEMPLAZA CON LA URL DE TU TIENDA
-    "consumer_key": "ck_00ba7786e6f9a3a9065929eeff33a91504b11719",
-    "consumer_secret": "cs_8293ffca8b59a8b8cc8494af8e78bc2de40356161",
+    "url": os.getenv("WOOCOMMERCE_URL"),
+    "consumer_key": os.getenv("WOOCOMMERCE_KEY"),
+    "consumer_secret": os.getenv("WOOCOMMERCE_SECRET"),
     "wp_api": True,
     "version": "wc/v3",
     "timeout": 20 
