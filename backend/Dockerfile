@@ -22,15 +22,16 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Copia los archivos de configuración
+# Copia los archivos de configuración y el nuevo entrypoint
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
-# Ejecuta las migraciones y recolecta estáticos
-RUN python manage.py migrate --noinput
+# Recolecta estáticos (esto sí se puede hacer durante el build)
 RUN python manage.py collectstatic --noinput
 
 EXPOSE 80
 
-# El comando final ahora es supervisord
-CMD ["/usr/bin/supervisord", "-c", "/etc/supervisor/conf.d/supervisord.conf"]
+# El comando final ahora es el entrypoint
+CMD ["/entrypoint.sh"]
