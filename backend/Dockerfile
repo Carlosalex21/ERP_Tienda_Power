@@ -1,15 +1,9 @@
 # Usar una imagen base oficial y estable de Python
 FROM python:3.11-slim
 
-# Establecer variables de entorno para Python
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
-
-# Establecer el directorio de trabajo dentro del contenedor
-WORKDIR /app
-
-# PASO CLAVE: Instalar las dependencias de sistema para WeasyPrint y PostgreSQL
+# Instalar Nginx y dependencias (¡falta en tu Dockerfile!)
 RUN apt-get update && apt-get install -y \
+    nginx \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
     libgdk-pixbuf-2.0-0 \
@@ -17,18 +11,23 @@ RUN apt-get update && apt-get install -y \
     libcairo2 \
     && rm -rf /var/lib/apt/lists/*
 
-# Copiar el archivo de requerimientos e instalar los paquetes de Python
+ENV PYTHONDONTWRITEBYTECODE 1
+ENV PYTHONUNBUFFERED 1
+
+WORKDIR /app
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copiar el resto del código de la aplicación al contenedor
 COPY . .
 
-#Recolecta todos los archivos estáticos
+COPY nginx.conf /etc/nginx/conf.d/default.conf
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
+
 RUN python manage.py collectstatic --noinput
 
-# Indicar que la aplicación escuchará en el puerto 8000
 EXPOSE 8000
+EXPOSE 80
 
-# Comando para iniciar la aplicación al arrancar el contenedor
-CMD ["gunicorn", "backend.wsgi", "--bind", "0.0.0.0:8000"]
+CMD ["/entrypoint.sh"]
