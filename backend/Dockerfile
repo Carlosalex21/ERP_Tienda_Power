@@ -26,14 +26,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copia el resto del código de la aplicación al contenedor
 COPY . .
 
-# Copia los archivos de configuración y el nuevo entrypoint
+# Copia los archivos de configuración y el entrypoint
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
 COPY entrypoint.sh /entrypoint.sh
 RUN chmod +x /entrypoint.sh
 
-# Crea la carpeta para los archivos media (imágenes)
-RUN mkdir -p /app/media
+# Crea la carpeta para los archivos media y asigna permisos
+RUN mkdir -p /app/media && chown -R www-data:www-data /app/media
 
 # Recolecta estáticos (esto sí se puede hacer durante el build)
 RUN python manage.py collectstatic --noinput
