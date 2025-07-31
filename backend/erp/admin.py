@@ -32,3 +32,9 @@ class UserMetadataAdmin(admin.ModelAdmin):
     @admin.display(description='Activo', ordering='user__is_active', boolean=True)
     def get_user_is_active(self, obj):
         return obj.user.is_active
+
+@admin.register(Rol)
+class RolAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'descripcion', 'activo')
+    search_fields = ('nombre',)
+    list_filter = ('activo',)
