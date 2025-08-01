@@ -1,6 +1,9 @@
 #!/bin/sh
 set -e
 
+echo "Adjusting permissions for media volume..."
+chown -R www-data:www-data /app/media
+
 # Ejecutar migraciones
 echo "Applying database migrations..."
 python manage.py migrate --noinput
