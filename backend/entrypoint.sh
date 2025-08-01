@@ -1,8 +1,10 @@
 #!/bin/sh
 set -e
 
+#esperar base de datos
+python wait-for-db.py
+
 chown -R www-data:www-data /app/media
-chown -R www-data:www-data /app/logs
 
 # Ejecutar migraciones
 echo "Applying database migrations..."
