@@ -35,6 +35,9 @@ RUN chmod +x /entrypoint.sh
 # Crea la carpeta para los archivos media y asigna permisos
 RUN mkdir -p /app/media && chown -R www-data:www-data /app/media
 
+# AÑADE ESTAS LÍNEAS para crear el directorio de logs
+RUN mkdir -p /app/logs && chown -R www-data:www-data /app/logs
+
 # Recolecta estáticos (esto sí se puede hacer durante el build)
 RUN python manage.py collectstatic --noinput
 
