@@ -13,3 +13,4 @@ WooCommerce==3.0.0
 gunicorn==22.0.0 #Servidor de aplicación para producción
 dj-database-url==2.2.0 #Para configurar la base de datos fácilmente
 whitenoise==6.7.0
+pillow==11.3.0
