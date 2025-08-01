@@ -9,5 +9,5 @@ echo "Applying database migrations..."
 python manage.py migrate --noinput
 
 # Iniciar supervisord (que a su vez iniciará gunicorn y nginx)
-echo "Starting supervisord..."
+echo "INICIANDO BUILD V3 - ESTE ES EL CORRECTO"
 exec /usr/bin/supervisord -c /etc/supervisor/conf.d/supervisord.conf
