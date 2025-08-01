@@ -1,8 +1,8 @@
 #!/bin/sh
 set -e
 
-echo "Adjusting permissions for media volume..."
 chown -R www-data:www-data /app/media
+chown -R www-data:www-data /app/logs
 
 # Ejecutar migraciones
 echo "Applying database migrations..."
