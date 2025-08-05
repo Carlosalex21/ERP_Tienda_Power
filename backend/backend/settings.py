@@ -154,6 +154,9 @@ USE_TZ = True
 STATIC_URL = '/static/'
 STATIC_ROOT = '/app/staticfiles'  # Directorio donde Whitenoise recogerá los archivos estáticos
 STORAGES = {
+    "default": {
+        "BACKEND": "django.core.files.storage.FileSystemStorage",
+    },
     "staticfiles": {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
