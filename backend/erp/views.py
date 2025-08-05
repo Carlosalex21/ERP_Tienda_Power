@@ -11,6 +11,8 @@ import os
 from rest_framework.response import Response
 import re
 import base64
+from xhtml2pdf import pisa
+from io import BytesIO
 from datetime import datetime
 from django.http import Http404
 import uuid
@@ -1798,8 +1800,7 @@ class FacturaImprimirView(APIView):
 
     def get(self, request, factura_id, *args, **kwargs):
         try:
-            # Obtener el tamaño del papel desde los parámetros de la URL (default: 58)
-            paper_size = request.GET.get('paper_size', '58') # <-- CORREGIDO
+            paper_size = request.GET.get('paper_size', '58')
 
             factura = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').get(id=factura_id)
             detalles = factura.detallefactura_set.all()
@@ -1829,14 +1830,26 @@ class FacturaImprimirView(APIView):
 
             html_string = render_to_string('tickets/ticket_template.html', context)
             
-            return HttpResponse(html_string, content_type='text/html')
+            # --- CORRECCIÓN AQUÍ: Generamos el PDF con xhtml2pdf ---
+            output_pdf = BytesIO()
+            pisa_status = pisa.CreatePDF(
+                html_string,
+                dest=output_pdf,
+                # Ajustamos el tamaño de la página aquí
+                pagesize=f"{paper_size}mm",
+                link_callback=lambda uri, rel: os.path.join(settings.STATIC_ROOT, uri.replace(settings.STATIC_URL, ''))
+            )
+
+            if not pisa_status.err:
+                return HttpResponse(output_pdf.getvalue(), content_type='application/pdf')
+            
+            return JsonResponse({"estado": "error", "mensaje": f"Error de PDF: {pisa_status.err}"}, status=500)
 
         except Factura.DoesNotExist:
             return JsonResponse({"estado": "error", "mensaje": "La factura no existe."}, status=404)
         except Exception as e:
-            print(f"Error al generar el HTML para factura {factura_id}: {e}")
+            print(f"Error al generar el PDF para factura {factura_id}: {e}")
             return JsonResponse({"estado": "error", "mensaje": "Error al generar la factura."}, status=500)
-
 class TransaccionpagoGet(APIView):
     permission_classes = [IsAuthenticated]
     def get(self, request, id):
