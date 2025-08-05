@@ -4,15 +4,15 @@
     <meta charset="UTF-8" />
     <title>Factura Simplificada {{ factura.correlativo }}</title>
     <style>
-      /* Estilos generales de impresión para cualquier tamaño de papel */
       @media print {
         body {
-          width: 100%; /* El 100% del ancho del papel */
+          width: 100%;
           font-family: "Helvetica", "Arial", sans-serif;
           color: #000;
           line-height: 1.2;
-          margin: 0; /* Elimina márgenes por defecto */
-          padding: 0; /* Elimina padding por defecto */
+          margin: 0;
+          padding: 0;
+          font-size: 10pt; /* Tamaño base de la fuente */
         }
 
         .ticket {
@@ -111,34 +111,6 @@
           margin-top: 5mm;
           padding-top: 3mm;
           border-top: 1px dashed #000;
-        }
-      }
-
-      /* Estilos específicos para papel de 58mm */
-      @media (max-width: 58mm) {
-        @page {
-          size: 58mm auto;
-          margin: 0; /* Sin márgenes */
-        }
-        body {
-          font-size: 10pt; /* Fuente más legible */
-        }
-        .logo {
-          width: 25mm; /* Logo más grande */
-        }
-      }
-
-      /* Estilos específicos para papel de 80mm */
-      @media (min-width: 58mm) {
-        @page {
-          size: 80mm auto;
-          margin: 0; /* Sin márgenes */
-        }
-        body {
-          font-size: 11pt; /* Fuente más grande para 80mm */
-        }
-        .logo {
-          width: 35mm; /* Logo más grande */
         }
       }
     </style>

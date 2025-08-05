@@ -1798,10 +1798,8 @@ class FacturaImprimirView(APIView):
 
     def get(self, request, factura_id, *args, **kwargs):
         try:
-            # Obtener el tamaño del papel desde los parámetros de la URL (default: 80)
             paper_size = request.GET.get('paper_size', '80')
 
-            # Cargar los datos de la factura
             factura = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').get(id=factura_id)
             detalles = factura.detallefactura_set.all()
             nombre_empleado = factura.usuario.get_full_name().strip() or factura.usuario.username if factura.usuario else "N/A"
@@ -1828,12 +1826,12 @@ class FacturaImprimirView(APIView):
                 'paper_size': paper_size,
             }
 
-            # Renderiza el HTML con la plantilla que ya tiene el CSS incrustado
+            # Renderizamos el HTML sin el @page, ya que lo pasaremos al generador de PDF
             html_string = render_to_string('tickets/ticket_template.html', context)
             
-            # --- Genera el PDF sin pasar stylesheets, ya que están en el HTML ---
-            # La librería WeasyPrint se encargará de renderizar el @page correcto
-            pdf_file = HTML(string=html_string, base_url=request.build_absolute_uri()).write_pdf()
+            # --- CORRECCIÓN AQUÍ: Pasamos el tamaño del papel directamente a write_pdf() ---
+            html = HTML(string=html_string, base_url=request.build_absolute_uri())
+            pdf_file = html.write_pdf(page_size=f"{paper_size}mm")
 
             response = HttpResponse(pdf_file, content_type='application/pdf')
             response['Content-Disposition'] = f'inline; filename="factura_{factura.correlativo}.pdf"'
@@ -1845,7 +1843,6 @@ class FacturaImprimirView(APIView):
         except Exception as e:
             print(f"Error al generar el PDF para factura {factura_id}: {e}")
             return JsonResponse({"estado": "error", "mensaje": "Error al generar la factura."}, status=500)
-
 
 class TransaccionpagoGet(APIView):
     permission_classes = [IsAuthenticated]
