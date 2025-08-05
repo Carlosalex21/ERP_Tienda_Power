@@ -1801,15 +1801,7 @@ class FacturaImprimirView(APIView):
             # Obtener el tamaño del papel desde los parámetros de la URL (default: 80)
             paper_size = request.GET.get('paper_size', '80')
 
-            # --- Lógica para seleccionar los archivos CSS ---
-            base_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_base.css')
-            
-            if paper_size == '58':
-                size_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_58mm.css')
-            else: # Default a 80mm
-                size_css_path = os.path.join(settings.BASE_DIR, 'erp', 'static', 'css', 'ticket_80mm.css')
-
-            # Cargar los datos de la factura (sin cambios)
+            # Cargar los datos de la factura
             factura = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').get(id=factura_id)
             detalles = factura.detallefactura_set.all()
             nombre_empleado = factura.usuario.get_full_name().strip() or factura.usuario.username if factura.usuario else "N/A"
@@ -1831,14 +1823,17 @@ class FacturaImprimirView(APIView):
                     'direccion': "Calle miguel de prado, 4 BJ 47002, Valladolid",
                     'telefono': "641 00 89 57",
                     'logo_path': logo_base64
-                }
+                },
+                'STATIC_URL': settings.STATIC_URL,
+                'paper_size': paper_size,
             }
 
+            # Renderiza el HTML con la plantilla que ya tiene el CSS incrustado
             html_string = render_to_string('tickets/ticket_template.html', context)
             
-            # --- Generar PDF cargando AMBOS archivos CSS ---
-            stylesheets = [CSS(base_css_path), CSS(size_css_path)]
-            pdf_file = HTML(string=html_string, base_url=request.build_absolute_uri()).write_pdf(stylesheets=stylesheets)
+            # --- Genera el PDF sin pasar stylesheets, ya que están en el HTML ---
+            # La librería WeasyPrint se encargará de renderizar el @page correcto
+            pdf_file = HTML(string=html_string, base_url=request.build_absolute_uri()).write_pdf()
 
             response = HttpResponse(pdf_file, content_type='application/pdf')
             response['Content-Disposition'] = f'inline; filename="factura_{factura.correlativo}.pdf"'
