@@ -1798,7 +1798,8 @@ class FacturaImprimirView(APIView):
 
     def get(self, request, factura_id, *args, **kwargs):
         try:
-            paper_size = request.GET.get('paper_size', '80')
+            # Obtener el tamaño del papel desde los parámetros de la URL (default: 58)
+            paper_size = request.GET.get('paper_size', '58') # <-- CORREGIDO
 
             factura = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').get(id=factura_id)
             detalles = factura.detallefactura_set.all()
@@ -1826,22 +1827,14 @@ class FacturaImprimirView(APIView):
                 'paper_size': paper_size,
             }
 
-            # Renderizamos el HTML sin el @page, ya que lo pasaremos al generador de PDF
             html_string = render_to_string('tickets/ticket_template.html', context)
             
-            # --- CORRECCIÓN AQUÍ: Pasamos el tamaño del papel directamente a write_pdf() ---
-            html = HTML(string=html_string, base_url=request.build_absolute_uri())
-            pdf_file = html.write_pdf(page_size=f"{paper_size}mm")
-
-            response = HttpResponse(pdf_file, content_type='application/pdf')
-            response['Content-Disposition'] = f'inline; filename="factura_{factura.correlativo}.pdf"'
-            
-            return response
+            return HttpResponse(html_string, content_type='text/html')
 
         except Factura.DoesNotExist:
             return JsonResponse({"estado": "error", "mensaje": "La factura no existe."}, status=404)
         except Exception as e:
-            print(f"Error al generar el PDF para factura {factura_id}: {e}")
+            print(f"Error al generar el HTML para factura {factura_id}: {e}")
             return JsonResponse({"estado": "error", "mensaje": "Error al generar la factura."}, status=500)
 
 class TransaccionpagoGet(APIView):
