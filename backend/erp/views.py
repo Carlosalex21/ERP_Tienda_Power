@@ -1821,7 +1821,7 @@ class FacturaImprimirView(APIView):
                     'nombre': "Power Nutricion Deportiva Excelente, S.L.",
                     'cif': "B-55450688",
                     'direccion': "Calle miguel de prado, 4 BJ 47002, Valladolid",
-                    'telefono': "641 00 89 57",
+                    'telefono': "641 00 89 51",
                     'logo_path': logo_base64
                 },
                 'STATIC_URL': settings.STATIC_URL,
