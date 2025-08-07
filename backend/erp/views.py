@@ -1788,10 +1788,11 @@ class PagoView(APIView):
         else:
             return JsonResponse({"estado": "error", "mensaje": "Error al registrar la transacción.", "detalles": serializer.errors}, status=HTTPStatus.BAD_REQUEST)
 
+        factura_serializer = FacturaSerializer(factura)
         return JsonResponse({
             "estado": "success",
             "mensaje": "Pago completado y transacción registrada.",
-            "factura": {"id": factura.id, "estado": factura.estado, "total": str(factura.total)},
+            "factura": factura_serializer.data,
             "transaccion": serializer.data
         }, status=HTTPStatus.OK)
 
