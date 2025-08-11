@@ -3035,6 +3035,47 @@ class FacturaDetalleReporteView(APIView):
         except (ValueError, TypeError):
             return Response({"error": "Formato de fecha inválido. Se requiere YYYY-MM-DD."}, status=status.HTTP_400_BAD_REQUEST)
 
+
+class AnularFacturaView(APIView):
+    permission_classes = [IsAuthenticated]
+
+    @transaction.atomic
+    def post(self, request, pk, format=None):
+        try:
+            # 1. Encontrar la factura que se quiere anular
+            factura_a_anular = Factura.objects.get(pk=pk)
+
+            # 2. Verificar que la factura no esté ya cancelada
+            if factura_a_anular.estado == 'cancelada':
+                return Response(
+                    {"mensaje": "Esta factura ya ha sido anulada anteriormente."}, 
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+
+            # 3. Devolver el stock de los productos al inventario
+            detalles = factura_a_anular.detallefactura_set.all()
+            for detalle in detalles:
+                producto = detalle.producto 
+                if producto:
+                    producto.cantidad += detalle.cantidad
+                    producto.save()
+
+            # 4. Cambiar el estado de la factura a "cancelada"
+            factura_a_anular.estado = 'cancelada'
+            factura_a_anular.save()
+
+            return Response(
+                {"mensaje": f"Factura {factura_a_anular.correlativo} anulada correctamente y stock restaurado."}, 
+                status=status.HTTP_200_OK
+            )
+
+        except Factura.DoesNotExist:
+            return Response({"mensaje": "La factura no existe."}, status=status.HTTP_404_NOT_FOUND)
+        except Exception as e:
+            # Si algo falla (ej. al devolver el stock), la transacción se revierte
+            return Response({"mensaje": f"Ocurrió un error inesperado: {str(e)}"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
 class ClienteCreateUpdateDelete(APIView):
     permission_classes = [IsAuthenticated]
     def post(self, request):
