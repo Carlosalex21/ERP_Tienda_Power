@@ -117,6 +117,7 @@ urlpatterns = [
     path('api/reportes/inventario/', InventarioActualView.as_view(), name='reporte-inventario'),
     path('api/reportes/ventas/', ReporteventaView.as_view(), name='reporte-ventas'),
     path('api/reportes/facturas-detalle/', FacturaDetalleReporteView.as_view(), name='reporte-facturas-detalle'),
+    path('factura/<int:pk>/anular/', AnularFacturaView.as_view(), name='anular-factura'),
     #Roles
     path('api/rol', RolList.as_view(), name='rol-list'),
     #Cierre de caja
