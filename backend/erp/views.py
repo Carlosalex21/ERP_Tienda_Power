@@ -15,6 +15,8 @@ from xhtml2pdf import pisa
 from io import BytesIO
 from datetime import datetime
 from django.http import Http404
+from django.db.models.functions import Concat
+from django.db.models import F, Value, CharField
 import uuid
 from weasyprint import HTML, CSS
 from django.template.loader import render_to_string
@@ -1209,61 +1211,59 @@ class InventarioActualView(APIView):
     """
     Vista para obtener un reporte de inventario en tiempo real,
     con opción de filtrar por categoría.
+    Esta versión está optimizada para ejecutarse directamente en la base de datos.
     """
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
-        categoria_id = request.query_params.get('categoria_id', None)
+        categoria_id = request.query_params.get('categoria_id')
 
-        # Obtener productos simples y variantes que deben estar en el inventario
-        productos_simples = Producto.objects.filter(activo=True, tipo='simple')
-        variantes = Variacionproducto.objects.select_related('producto__categoria').filter(producto__activo=True)
+        # 1. Obtener productos simples
+        # Filtramos por tipo 'simple' y que tengan una cantidad definida
+        productos_simples = Producto.objects.filter(
+            activo=True,
+            tipo='simple'
+        ).annotate(
+            # Añadimos el nombre de la categoría desde la relación
+            categoria=F('categoria__nombre')
+        ).values(
+            'nombre', 'categoria', 'codigo_barras', 'cantidad'
+        )
 
-        if categoria_id:
-            try:
-                # Filtrar ambos querysets por el ID de la categoría
-                productos_simples = productos_simples.filter(categoria_id=categoria_id)
-                variantes = variantes.filter(producto__categoria_id=categoria_id)
-            except ValueError:
-                return Response({"error": "ID de categoría inválido."}, status=400)
-
-        # Unificar los datos en una sola lista con una estructura consistente
-        inventario_unificado = []
-        for producto in productos_simples:
-            inventario_unificado.append({
-                'id': f"p-{producto.id}",
-                'nombre': producto.nombre,
-                'categoria': producto.categoria.nombre if producto.categoria else 'Sin Categoría',
-                'codigo_barras': producto.codigo_barras,
-                'cantidad': producto.cantidad or 0
-            })
+        # 2. Obtener las variantes de productos
+        variantes = Variacionproducto.objects.select_related(
+            'producto', 'producto__categoria'
+        ).filter(
+            producto__activo=True
+        ).annotate(
+            nombre_completo=Concat(
+                F('producto__nombre'), Value(' - '), F('nombre'),
+                output_field=CharField()
+            ),
+            # Obtenemos la categoría del producto padre
+            categoria=F('producto__categoria__nombre')
+        ).values(
+            'nombre_completo', 'categoria', 'codigo_barras', 'cantidad'
+        ).rename(nombre='nombre_completo')
         
-        for variante in variantes:
-            inventario_unificado.append({
-                'id': f"v-{variante.id}",
-                'nombre': f"{variante.producto.nombre} - {variante.nombre}",
-                'categoria': variante.producto.categoria.nombre if variante.producto.categoria else 'Sin Categoría',
-                'codigo_barras': variante.codigo_barras,
-                'cantidad': variante.cantidad or 0
-            })
+        # 3. Aplicar filtro de categoría si se proporciona
+        if categoria_id and categoria_id.isdigit():
+            productos_simples = productos_simples.filter(categoria_id=categoria_id)
+            variantes = variantes.filter(producto__categoria_id=categoria_id)
 
-        # Ordenar la lista final alfabéticamente por nombre
-        inventario_ordenado = sorted(inventario_unificado, key=lambda item: item['nombre'])
+        # 4. Unir ambas consultas en una sola
+        inventario_completo = list(productos_simples) + list(variantes)
         
-        # Serializar los datos usando el serializer genérico
-        serializer = InventarioItemSerializer(inventario_ordenado, many=True)
+        # 5. Ordenar la lista final en Python
+        inventario_ordenado = sorted(inventario_completo, key=lambda item: item['nombre'])
         
-        # Obtener todas las categorías para el filtro del frontend (solo se hace una vez)
-        categorias_data = []
-        if not categoria_id: # Para no enviarlas en cada filtro
-             categorias = Categoriaproducto.objects.filter(activo=True).order_by('nombre')
-             categorias_data = CategoriaSerializer(categorias, many=True).data
+        # 6. Obtener todas las categorías para el filtro del frontend
+        categorias = Categoriaproducto.objects.filter(activo=True).values('id', 'nombre').order_by('nombre')
 
         return Response({
-            "inventario": serializer.data,
-            "categorias": categorias_data
-        })
-
+            "inventario": inventario_ordenado,
+            "categorias": list(categorias)
+        }, status=status.HTTP_200_OK)
 
 class ReporteventaView(APIView):
     """
@@ -1282,14 +1282,15 @@ class ReporteventaView(APIView):
             return Response({"error": "Se requieren start_date y end_date"}, status=400)
 
         try:
-            # Convertir las fechas de string a objeto datetime consciente de la zona horaria
+            # 1. Convertir las fechas de string a objeto date
             start_date = datetime.strptime(start_date_str, '%Y-%m-%d').date()
             end_date = datetime.strptime(end_date_str, '%Y-%m-%d').date()
             
+            # 2. Crear un rango de 24 horas para cada fecha, consciente de la zona horaria del servidor
             start_of_day = timezone.make_aware(datetime.combine(start_date, time.min))
             end_of_day = timezone.make_aware(datetime.combine(end_date, time.max))
 
-            # Construir el queryset base, optimizando con select_related
+            # 3. Construir el queryset base, filtrando con el rango de fechas corregido
             queryset = Factura.objects.filter(
                 fecha_operacion__range=(start_of_day, end_of_day)
             ).select_related('cliente', 'usuario', 'metodo_pago').order_by('-fecha_operacion')
@@ -1298,7 +1299,6 @@ class ReporteventaView(APIView):
             if estado:
                 queryset = queryset.filter(estado__iexact=estado)
             
-            # --- CAMBIO CLAVE ---
             # Usar el VentaReporteSerializer para convertir los datos al formato JSON correcto
             serializer = VentaReporteSerializer(queryset, many=True)
             
@@ -1307,7 +1307,7 @@ class ReporteventaView(APIView):
 
         except Exception as e:
             print(f"Error generando reporte de ventas: {e}")
-            return Response({"error": "Ocurrió un error inesperado."}, status=500)
+            return Response({"error": "Ocurrió un error inesperado al procesar la solicitud."}, status=500)
 
 
 
