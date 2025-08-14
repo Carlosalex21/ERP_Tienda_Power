@@ -152,7 +152,7 @@ USE_TZ = True
 # https://docs.djangoproject.com/en/5.1/howto/static-files/
 
 STATIC_URL = '/static/'
-STATIC_ROOT = '/app/staticfiles'  # Directorio donde Whitenoise recogerá los archivos estáticos
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # Directorio donde Whitenoise recogerá los archivos estáticos
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
@@ -163,7 +163,7 @@ STORAGES = {
 }
 # Configuración para archivos subidos (imágenes, media, etc.)
 MEDIA_URL = '/media/'
-MEDIA_ROOT = '/app/media' 
+MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
 # Default primary key field type
 # https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
@@ -179,3 +179,9 @@ WOOCOMMERCE_CONFIG = {
     "version": "wc/v3",
     "timeout": 20 
 }
+
+#Configuracion para usar la base de datos local ya con el proyecto en produccion
+try:
+    from .local_settings import *
+except ImportError:
+    pass
