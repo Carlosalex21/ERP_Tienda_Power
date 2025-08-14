@@ -1208,63 +1208,48 @@ class ReporteclienteView(APIView):
 
 
 class InventarioActualView(APIView):
-    """
-    Vista para obtener un reporte de inventario en tiempo real,
-    con opción de filtrar por categoría.
-    Esta versión está optimizada para ejecutarse directamente en la base de datos.
-    """
-    permission_classes = [IsAuthenticated]
+    permission_classes = [permissions.IsAuthenticated]
 
     def get(self, request):
         categoria_id = request.query_params.get('categoria_id')
 
-        # 1. Obtener productos simples
-        # Filtramos por tipo 'simple' y que tengan una cantidad definida
-        productos_simples = Producto.objects.filter(
-            activo=True,
-            tipo='simple'
-        ).annotate(
-            # Añadimos el nombre de la categoría desde la relación
-            categoria=F('categoria__nombre')
-        ).values(
-            'nombre', 'categoria', 'codigo_barras', 'cantidad'
-        )
-
-        # 2. Obtener las variantes de productos
-        variantes = Variacionproducto.objects.select_related(
-            'producto', 'producto__categoria'
-        ).filter(
-            producto__activo=True
-        ).annotate(
-            nombre_completo=Concat(
-                F('producto__nombre'), Value(' - '), F('nombre'),
-                output_field=CharField()
-            ),
-            # Obtenemos la categoría del producto padre
-            categoria=F('producto__categoria__nombre')
-        ).values(
-            'nombre_completo', 'categoria', 'codigo_barras', 'cantidad'
-        ).rename(nombre='nombre_completo')
-        
-        # 3. Aplicar filtro de categoría si se proporciona
+        # --- Productos Simples ---
+        productos_simples_qs = Producto.objects.filter(activo=True, tipo='simple')
         if categoria_id and categoria_id.isdigit():
-            productos_simples = productos_simples.filter(categoria_id=categoria_id)
-            variantes = variantes.filter(producto__categoria_id=categoria_id)
+            productos_simples_qs = productos_simples_qs.filter(categoria_id=categoria_id)
 
-        # 4. Unir ambas consultas en una sola
+        # ✅ Para mantener la consistencia, creamos 'nombre_completo' que es igual a 'nombre'
+        productos_simples = productos_simples_qs.annotate(
+            nombre_categoria=F('categoria__nombre'),
+            nombre_completo=F('nombre') 
+        ).values('nombre_completo', 'nombre_categoria', 'codigo_barras', 'cantidad')
+
+        # --- Variantes de Productos ---
+        variantes_qs = Variacionproducto.objects.filter(producto__activo=True)
+        if categoria_id and categoria_id.isdigit():
+            variantes_qs = variantes_qs.filter(producto__categoria_id=categoria_id)
+
+        # ✅ Cambiamos el nombre de la anotación a 'nombre_completo' para evitar conflicto
+        variantes = variantes_qs.select_related('producto', 'producto__categoria').annotate(
+            nombre_completo=Concat(F('producto__nombre'), Value(' - '), F('nombre'), output_field=CharField()),
+            nombre_categoria=F('producto__categoria__nombre')
+        ).values('nombre_completo', 'nombre_categoria', 'codigo_barras', 'cantidad')
+        
+        # --- Unir y Devolver Resultados ---
         inventario_completo = list(productos_simples) + list(variantes)
         
-        # 5. Ordenar la lista final en Python
-        inventario_ordenado = sorted(inventario_completo, key=lambda item: item['nombre'])
-        
-        # 6. Obtener todas las categorías para el filtro del frontend
+        # ✅ Ordenamos por el nuevo campo 'nombre_completo'
+        inventario_ordenado = sorted(
+            inventario_completo, 
+            key=lambda item: item.get('nombre_completo', '').lower()
+        )
         categorias = Categoriaproducto.objects.filter(activo=True).values('id', 'nombre').order_by('nombre')
 
         return Response({
             "inventario": inventario_ordenado,
             "categorias": list(categorias)
         }, status=status.HTTP_200_OK)
-
+    
 class ReporteventaView(APIView):
     """
     Genera un reporte detallado de ventas para el frontend.
@@ -1291,12 +1276,14 @@ class ReporteventaView(APIView):
             end_of_day = timezone.make_aware(datetime.combine(end_date, time.max))
 
             # 3. Construir el queryset base, filtrando con el rango de fechas corregido
-            queryset = Factura.objects.filter(
-                fecha_operacion__range=(start_of_day, end_of_day)
-            ).select_related('cliente', 'usuario', 'metodo_pago').order_by('-fecha_operacion')
+            print("--- DEBUG: Ejecutando consulta sin filtro de fechas ---")
+            queryset = Factura.objects.all().select_related(
+            'cliente', 'usuario', 'metodo_pago'
+            ).order_by('-fecha_operacion')
 
-            # Aplicar filtro de estado si se proporciona
+        # Aplicar filtro de estado si se proporciona
             if estado:
+                print(f"--- DEBUG: Aplicando filtro de estado: {estado} ---")
                 queryset = queryset.filter(estado__iexact=estado)
             
             # Usar el VentaReporteSerializer para convertir los datos al formato JSON correcto
