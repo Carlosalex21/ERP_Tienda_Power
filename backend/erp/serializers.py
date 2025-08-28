@@ -487,22 +487,47 @@ class CupondescuentoSerializer(serializers.ModelSerializer):
 
 class DetallefacturaSerializer(serializers.ModelSerializer):
     # Obtenemos el nombre del producto a través de la relación ForeignKey
-    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True)
-    
-    # Opcional: Si quieres mostrar también el nombre de la variante
-    variante_nombre = serializers.CharField(source='variante.nombre', read_only=True, allow_null=True)
-
+    nombre = serializers.SerializerMethodField()
+    codigo_barras = serializers.SerializerMethodField()
     class Meta:
         model = Detallefactura
         # Lista de campos que necesita el modal en el frontend
         fields = [
-            'producto_nombre', 
-            'variante_nombre', 
-            'cantidad', 
-            'precio_unitario', 
-            'descuento', 
+            'id',
+            'nombre', 
+            'codigo_barras',
+            'cantidad',
+            'precio_unitario',
+            'descuento',
+            'subtotal_linea',
+            'iva_linea',
             'total_linea'
         ]
+
+    def get_nombre(self, obj):
+        """
+        Esta función crea el nombre compuesto, ahora de forma inteligente.
+        """
+        # Si no hay variante, devuelve solo el nombre del producto
+        if not obj.variante or not obj.variante.nombre:
+            return obj.producto.nombre
+        
+        nombre_variante_limpio = obj.variante.nombre.replace(obj.producto.nombre, '').strip()
+
+        # Si el nombre de la variante se queda vacío, usamos el original para evitar "()"
+        if not nombre_variante_limpio:
+            nombre_variante_limpio = obj.variante.nombre
+            
+        return f"{obj.producto.nombre} ({nombre_variante_limpio})"
+
+    def get_codigo_barras(self, obj):
+        """
+        Devuelve el código de barras de la variante si existe,
+        de lo contrario, devuelve el del producto base.
+        """
+        if obj.variante and obj.variante.codigo_barras:
+            return obj.variante.codigo_barras
+        return obj.producto.codigo_barras
 
 # --- SERIALIZER PRINCIPAL PARA EL REPORTE (COMBINA TODO) ---
 class FacturaReporteSerializer(serializers.ModelSerializer):
@@ -571,6 +596,8 @@ class DevolucionSerializer(serializers.ModelSerializer):
 
 
 class FacturaSerializer(serializers.ModelSerializer):
+    detalles = DetallefacturaSerializer(many=True, read_only=True)
+
     class Meta:
         model = Factura
         fields = '__all__'

@@ -137,7 +137,7 @@ class Cupondescuento(models.Model):
 
 
 class Detallefactura(models.Model):
-    factura = models.ForeignKey('Factura', models.DO_NOTHING, blank=True, null=True)
+    factura = models.ForeignKey('Factura', models.CASCADE, blank=True, null=True, related_name='detalles')
     producto = models.ForeignKey('Producto', models.DO_NOTHING, blank=True, null=True)
     variante = models.ForeignKey('Variacionproducto', on_delete=models.CASCADE, null=True, blank=True)
     cantidad = models.IntegerField()
