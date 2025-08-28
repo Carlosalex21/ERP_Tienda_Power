@@ -532,7 +532,7 @@ class DetallefacturaSerializer(serializers.ModelSerializer):
 # --- SERIALIZER PRINCIPAL PARA EL REPORTE (COMBINA TODO) ---
 class FacturaReporteSerializer(serializers.ModelSerializer):
     # Anidamos los detalles usando la relación inversa ('detalles' es el related_name)
-    detalles = DetallefacturaSerializer(many=True, read_only=True, source='detallefactura_set')
+    detalles = DetallefacturaSerializer(many=True, read_only=True)
     
     # Anidamos los datos del empleado
     usuario = EmpleadoSerializer(read_only=True)

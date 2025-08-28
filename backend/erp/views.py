@@ -2981,7 +2981,7 @@ class FacturaDetalleReporteView(APIView):
             # Filtramos usando el rango consciente de la zona horaria
             queryset = Factura.objects.filter(
                 fecha_operacion__range=(start_of_day, end_of_day)
-            ).select_related('cliente', 'usuario').prefetch_related('detallefactura_set').order_by('-fecha_operacion')
+            ).select_related('cliente', 'usuario').prefetch_related('detalles').order_by('-fecha_operacion')
 
             if estado:
                 queryset = queryset.filter(estado__iexact=estado) # Usamos iexact para ignorar mayúsculas/minúsculas
