@@ -906,40 +906,12 @@ class BarcodeScanView(APIView):
                 status=HTTPStatus.NOT_FOUND,
             )
 
-        # La lógica para construir la respuesta JSON se mantiene igual
-        detalles_queryset = Detallefactura.objects.filter(factura=factura).select_related("producto", "variante")
-        detalles_para_frontend = []
-        for d in detalles_queryset:
-            if d.variante:
-                nombre_item = f"{d.producto.nombre} ({d.variante.nombre})"
-                codigo_barras_item = d.variante.codigo_barras
-            else:
-                nombre_item = d.producto.nombre
-                codigo_barras_item = d.producto.codigo_barras
-            
-            detalles_para_frontend.append({
-                "id": d.id,
-                "producto_id": d.producto.id,
-                "nombre": nombre_item,
-                "codigo_barras": codigo_barras_item,
-                "cantidad": d.cantidad,
-                "precio_unitario": str(d.precio_unitario),
-                "descuento": str(d.descuento),
-                "subtotal_linea": str(d.subtotal_linea),
-                "iva_linea": str(d.iva_linea),
-                "total_linea": str(d.total_linea)
-            })
+        serializer = FacturaSerializer(factura)
 
-        return JsonResponse({
+        return Response({
             "estado": "success",
             "mensaje": "Producto agregado/actualizado en la factura.",
-            "factura": {
-                "id": factura.id,
-                "subtotal": str(factura.subtotal),
-                "iva_total": str(factura.iva_total),
-                "total": str(factura.total),
-                "detalles": detalles_para_frontend
-            },
+            "factura": serializer.data,
         }, status=HTTPStatus.OK)
 
 # =========================================================
