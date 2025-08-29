@@ -3012,12 +3012,14 @@ class AnularFacturaView(APIView):
                 )
 
             # 3. Devolver el stock de los productos al inventario
-            detalles = factura_a_anular.detallefactura_set.all()
+            detalles = factura_a_anular.detalles.all()
             for detalle in detalles:
-                producto = detalle.producto 
-                if producto:
-                    producto.cantidad += detalle.cantidad
-                    producto.save()
+                if detalle.variante:
+                    detalle.variante.cantidad += detalle.cantidad
+                    detalle.variante.save()
+                elif detalle.producto:
+                    detalle.producto.cantidad += detalle.cantidad
+                    detalle.producto.save()
 
             # 4. Cambiar el estado de la factura a "cancelada"
             factura_a_anular.estado = 'cancelada'

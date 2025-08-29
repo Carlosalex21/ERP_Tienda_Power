@@ -566,7 +566,7 @@ class FacturaDetalladaReporteSerializer(serializers.ModelSerializer):
     cliente = serializers.StringRelatedField()
     metodo_pago = serializers.StringRelatedField()
     creado_por = serializers.StringRelatedField(source='creado_por.user.username', default='N/A')
-    detalles = DetalleFacturaReporteSerializer(source='detallefactura_set', many=True, read_only=True)
+    detalles = DetallefacturaSerializer(many=True, read_only=True)
 
     class Meta:
         model = Factura
