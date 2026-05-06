@@ -3,7 +3,7 @@ import os
 from datetime import timedelta
 import dj_database_url
 
-#Import dotenv
+# Import dotenv
 from dotenv import load_dotenv # type: ignore
 load_dotenv()
 
@@ -29,26 +29,65 @@ REST_FRAMEWORK = {
     ),
 }
 
-# Application definition
+# =========================================================
+# CONFIGURACIÓN MULTI-TENANT (django-tenants)
+# =========================================================
 
-APPS = [
-    "erp",
-    "tienda",
-]
+# Aplicaciones Compartidas (Esquema 'public')
+SHARED_APPS = [
+    'django_tenants', 
 
-INSTALLED_APPS = [
+    # Apps de Django globales
     "django.contrib.admin",
-    "django.contrib.auth",
+    "django.contrib.auth", # Autenticación del admin global
     "django.contrib.contenttypes",
     "django.contrib.sessions",
     "django.contrib.messages",
     "django.contrib.staticfiles",
+    
+    # Librerias globales
     "rest_framework",
     "rest_framework.authtoken",
     "corsheaders",
-] + APPS
+
+    # App para gestionar los subdominios y suscripciones
+    'apps.tenants', 
+]
+
+# Aplicaciones del Inquilino (Esquema 'cliente1', 'cliente2')
+TENANT_APPS = [
+    "django.contrib.auth", # Permite que cada cliente tenga sus propios usuarios
+    "django.contrib.contenttypes",
+
+    #APPS
+    'apps.common',
+    'apps.usuarios',
+    'apps.configuracion',
+    'apps.clientes',
+    'apps.proveedores',
+    'apps.inventario',
+    'apps.facturacion',
+    'apps.rrhh',
+    'apps.reportes',
+    
+    # Si 'erp' y 'tienda' aún tienen modelos viejos, déjalos aquí temporalmente
+    #'erp',
+    #'tienda',
+]
+INSTALLED_APPS = list(set(SHARED_APPS + TENANT_APPS))
+
+# Definición de modelos para Tenants y Dominios
+TENANT_MODEL = "tenants.Client"
+TENANT_DOMAIN_MODEL = "tenants.Domain"
+
+# Enrutador de base de datos
+DATABASE_ROUTERS = (
+    'django_tenants.routers.TenantSyncRouter',
+)
+
 
 MIDDLEWARE = [
+    "django_tenants.middleware.main.TenantMainMiddleware", 
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # Para servir archivos estáticos en producción
     "django.contrib.sessions.middleware.SessionMiddleware",
@@ -61,10 +100,7 @@ MIDDLEWARE = [
 ]
 
 CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:8080,http://127.0.0.1:8080').split(',')
-
-
 CORS_ALLOW_CREDENTIALS = True
-
 CORS_ALLOW_HEADERS = [
     "accept",
     "authorization",
@@ -75,9 +111,7 @@ CORS_ALLOW_HEADERS = [
 ]
 
 CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:8080').split(',')
-
 X_FRAME_OPTIONS = 'SAMEORIGIN'
-
 ROOT_URLCONF = "backend.urls"
 
 TEMPLATES = [
@@ -99,60 +133,50 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 
-# Database
-# https://docs.djangoproject.com/en/5.1/ref/settings/#databases
+# =========================================================
+# BASE DE DATOS (Multi-Tenant)
+# =========================================================
 
 if 'DATABASE_URL' in os.environ:
-    # Si la variable DATABASE_URL existe (en producción/Coolify), usa PostgreSQL.
+    # Producción (Coolify)
     DATABASES = {
-        'default': dj_database_url.config(conn_max_age=600, ssl_require=False) # ssl_require=False es a menudo necesario para Coolify
+        'default': dj_database_url.config(conn_max_age=600, ssl_require=False)
     }
+    # Forzamos el motor de tenants para la URL de producción
+    DATABASES['default']['ENGINE'] = 'django_tenants.postgresql_backend'
 else:
-    # Si no, usa una base de datos SQLite3 (para desarrollo local en Windows).
+    # Desarrollo Local
     DATABASES = {
         'default': {
-            'ENGINE': 'django.db.backends.sqlite3',
-            'NAME': BASE_DIR / 'db.sqlite3', # La sintaxis con Path es más limpia
+            'ENGINE': 'django_tenants.postgresql_backend', 
+            'NAME': 'emp_system_saas', # 
+            'USER': 'postgres',
+            'PASSWORD': 'carlosalex', # CAMBIARLO POR PASSWORD LOCAL
+            'HOST': 'localhost',
+            'PORT': '5432',
         }
     }
 
 
 # Password validation
-# https://docs.djangoproject.com/en/5.1/ref/settings/#auth-password-validators
-
 AUTH_PASSWORD_VALIDATORS = [
-    {
-        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
-    },
-    {
-        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
-    },
+    {"NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",},
+    {"NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",},
+    {"NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",},
+    {"NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",},
 ]
 
 
 # Internationalization
-# https://docs.djangoproject.com/en/5.1/topics/i18n/
-
 LANGUAGE_CODE = "es-es"
-
-TIME_ZONE = "UTC"
-
+TIME_ZONE = "UTC" 
 USE_I18N = True
-
 USE_TZ = True
 
 
-# Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/5.1/howto/static-files/
-
+# Static files
 STATIC_URL = '/static/'
-STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')  # Directorio donde Whitenoise recogerá los archivos estáticos
+STATIC_ROOT = os.path.join(BASE_DIR, 'staticfiles')
 STORAGES = {
     "default": {
         "BACKEND": "django.core.files.storage.FileSystemStorage",
@@ -161,16 +185,12 @@ STORAGES = {
         "BACKEND": "whitenoise.storage.CompressedManifestStaticFilesStorage",
     },
 }
-# Configuración para archivos subidos (imágenes, media, etc.)
 MEDIA_URL = '/media/'
 MEDIA_ROOT = os.path.join(BASE_DIR, 'media')
 
-# Default primary key field type
-# https://docs.djangoproject.com/en/5.1/ref/settings/#default-auto-field
-
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
-#Configuracion de Woocomerce para la conexion de inventarion con sistema 
+# WooCommerce Config
 WOOCOMMERCE_CONFIG = {
     "url": os.getenv("WOOCOMMERCE_URL"),
     "consumer_key": os.getenv("WOOCOMMERCE_KEY"),
@@ -180,7 +200,7 @@ WOOCOMMERCE_CONFIG = {
     "timeout": 20 
 }
 
-#Configuracion para usar la base de datos local ya con el proyecto en produccion
+# Local Settings override
 try:
     from .local_settings import *
 except ImportError:

@@ -1,7 +1,8 @@
 Django==5.1
+django-tenants==3.7.0
 djangorestframework==3.15.2
 python-dotenv==1.0.1
-psycopg2-binary==2.9.9 #Más fiable para despliegue
+psycopg2-binary==2.9.9 
 django-autoslug==1.9.9
 django-cors-headers==4.7.0
 pillow==11.2.1
@@ -10,7 +11,7 @@ djangorestframework-simplejwt==5.5.0
 openpyxl==3.1.5
 weasyprint==66.0 
 WooCommerce==3.0.0
-gunicorn==22.0.0 #Servidor de aplicación para producción
-dj-database-url==2.2.0 #Para configurar la base de datos fácilmente
+gunicorn==22.0.0 
+dj-database-url==2.2.0 
 whitenoise==6.7.0
 xhtml2pdf==0.2.17
