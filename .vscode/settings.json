@@ -1,4 +1,9 @@
 {
+    "python.defaultInterpreterPath": "${workspaceFolder}\\env\\Scripts\\python.exe",
+    "python.envFile": "${workspaceFolder}\\.env",
+    "python.analysis.extraPaths": [
+        "./backend"
+    ],
     "terminal.integrated.commandsToSkipShell": [
         "\"python.analysis.diagnosticSeverityOverrides\": {     \"reportUnusedImport\": \"none\" }"
     ]

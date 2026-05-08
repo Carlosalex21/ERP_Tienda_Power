@@ -4,8 +4,8 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from django.http import JsonResponse
 
-from erp.models import MetodoPago, Transaccionpago, Devolucion
-from erp.serializers import MetodoPagoSerializer, TransaccionpagoSerializer, DevolucionSerializer
+from apps.facturacion.models import MetodoPago, Transaccionpago, Devolucion
+from apps.facturacion.api.serializers import MetodoPagoSerializer, TransaccionpagoSerializer, DevolucionSerializer
 
 class MetodoPagoViewSet(viewsets.ModelViewSet):
     queryset = MetodoPago.objects.filter(activo=True).order_by("nombre")

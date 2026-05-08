@@ -1,7 +1,11 @@
 from rest_framework import serializers
 from decimal import Decimal
 # IMPORTANTE: Ajusta la ruta de modelos
-from erp.models import Producto, Variacionproducto, Categoriaproducto, Almacen, Inventario, Atributo, ValorAtributo
+from apps.inventario.models import (
+    Producto, Variacionproducto, Categoriaproducto, Almacen, 
+    Inventario, Atributo, ValorAtributo, MovimientoInventario,
+    Reservastock, Lecturacodigobarras, Productocategoria
+)
 
 class AlmacenSerializer(serializers.ModelSerializer):
     class Meta:
@@ -50,4 +54,29 @@ class ProductoSerializer(serializers.ModelSerializer):
     variantes = VariacionproductoSerializer(many=True, read_only=True)
     class Meta:
         model = Producto
+        fields = '__all__'
+
+class InventarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Inventario
+        fields = '__all__'
+
+class ProductocategoriaSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Productocategoria
+        fields = '__all__'
+
+class MovimientoInventarioSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = MovimientoInventario
+        fields = '__all__'
+
+class ReservastockSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Reservastock
+        fields = '__all__'
+
+class LecturacodigobarrasSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Lecturacodigobarras
         fields = '__all__'

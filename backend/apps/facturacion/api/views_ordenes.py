@@ -1,6 +1,6 @@
 from rest_framework import viewsets, permissions
-from erp.models import Orden
-from erp.serializers import OrdenSerializer
+from apps.facturacion.models import Orden
+from apps.facturacion.api.serializers import OrdenSerializer
 
 class OrdenViewSet(viewsets.ModelViewSet):
     """Maneja el CRUD de Órdenes/Pedidos antes de ser facturados."""

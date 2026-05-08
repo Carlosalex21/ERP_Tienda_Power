@@ -1,8 +1,9 @@
 from decimal import Decimal
 from django.db import transaction
 from django.utils import timezone
-from erp.models import Factura, Detallefactura, Variacionproducto, Producto
-from apps.facturacion.core.calculos_service import recalcular_y_guardar_factura
+from apps.facturacion.models import Factura, Detallefactura
+from apps.inventario.models import Variacionproducto, Producto
+from apps.facturacion.services.calculos_service import recalcular_y_guardar_factura
 
 @transaction.atomic
 def agg_producto_a_orden_service(usuario, cliente_id, barcode, cantidad=1, descuento_linea=None, eliminar=False):

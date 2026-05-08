@@ -1,7 +1,7 @@
 from rest_framework import viewsets, permissions, status
 from rest_framework.response import Response
 from .views_auth import IsAdmin
-from ..services import crear_empleado_service
+from ..services.usuarios_service import crear_empleado_service
 from ..models import Rol, Sesionusuario, Logactividad, UserMetadata
 from .serializers import (
     RolSerializer, SesionusuarioSerializer, LogactividadSerializer,

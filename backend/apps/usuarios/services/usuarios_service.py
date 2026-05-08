@@ -1,6 +1,6 @@
 from django.db import transaction
 from django.contrib.auth import get_user_model
-from models import UserMetadata
+from apps.usuarios.models import UserMetadata
 
 User = get_user_model()
 

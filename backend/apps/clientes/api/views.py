@@ -5,7 +5,7 @@ from rest_framework import status
 from django.http import JsonResponse
 from http import HTTPStatus
 
-from models import Cliente
+from apps.clientes.models import Cliente
 from .serializers import ClienteSerializer
 
 class ClienteList(APIView):

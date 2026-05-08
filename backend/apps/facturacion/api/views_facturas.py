@@ -1,3 +1,4 @@
+from rest_framework.views import APIView
 from rest_framework import viewsets, permissions, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
@@ -27,3 +28,24 @@ class FacturaViewSet(viewsets.ReadOnlyModelViewSet):
         factura.estado = 'cancelada'
         factura.save()
         return Response({"mensaje": "Factura anulada y stock devuelto."})
+
+class AnularFacturaView(APIView):
+    """Vista individual para anular una factura por su PK."""
+    permission_classes = [permissions.IsAuthenticated]
+
+    def post(self, request, pk):
+        try:
+            factura = Factura.objects.get(pk=pk)
+            if factura.estado == 'cancelada':
+                return Response({"error": "Ya está anulada"}, status=status.HTTP_400_BAD_REQUEST)
+
+            # Restaurar Stock
+            for detalle in factura.detalles.all():
+                item = detalle.variante if detalle.variante else detalle.producto
+                restaurar_stock_item(item, detalle.cantidad)
+
+            factura.estado = 'cancelada'
+            factura.save()
+            return Response({"mensaje": "Factura anulada y stock devuelto."})
+        except Factura.DoesNotExist:
+            return Response({"error": "Factura no encontrada"}, status=status.HTTP_404_NOT_FOUND)

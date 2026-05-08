@@ -1,6 +1,6 @@
 # apps/inventario/core/stock_service.py
 from django.db import transaction
-from erp.models import Producto, Variacionproducto, MovimientoInventario, Inventario
+from apps.inventario.models import Producto, Variacionproducto, MovimientoInventario, Inventario
 from erp.woocommerce_sync import actualizar_stock_woocommerce # Asegúrate de que esta ruta sea correcta
 
 def sincronizar_item_woocommerce(item):

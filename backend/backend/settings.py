@@ -5,11 +5,11 @@ import dj_database_url
 
 # Import dotenv
 from dotenv import load_dotenv # type: ignore
-load_dotenv()
+load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent.parent / '.env', override=True)
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("SECRET_KEY")
+SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-local-dev-key-123456")
 
 # En producción (Coolify), DEBUG será 'False'.
 DEBUG = os.getenv('DEBUG', 'False') == 'True'

@@ -1,6 +1,6 @@
 from rest_framework.permissions import BasePermission, AllowAny
 from rest_framework_simplejwt.views import TokenObtainPairView
-from serializers import MyTokenObtainPairSerializer
+from .serializers import MyTokenObtainPairSerializer
 
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):

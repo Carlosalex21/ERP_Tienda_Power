@@ -1,11 +1,10 @@
-from django.urls import path
-# from .views import *
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .api.views import ProveedorViewSet
+
+router = DefaultRouter()
+router.register(r'proveedores', ProveedorViewSet, basename='proveedor')
 
 urlpatterns = [
-    # Rutas base para Proveedores 
-    # path("proveedor/", ProveedorList.as_view(), name="proveedor-list"),
-    # path("proveedor/<int:id>/", ProveedorGet.as_view(), name="proveedor-detail"),
-    # path("proveedor/crear/", ProveedorCreateUpdateDelete.as_view(), name="proveedor-create"),
-    # path("proveedor/editar/<int:id>/", ProveedorCreateUpdateDelete.as_view(), name="proveedor-update"),
-    # path("proveedor/eliminar/<int:id>/", ProveedorCreateUpdateDelete.as_view(), name="proveedor-delete"),
+    path('', include(router.urls)),
 ]

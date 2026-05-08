@@ -5,7 +5,7 @@ from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 
 # Importamos nuestros servicios
-from apps.inventario.core.catalog_service import obtener_inventario_unificado, obtener_categorias_activas
+from apps.inventario.services.catalog_service import obtener_inventario_unificado, obtener_categorias_activas
 
 class InventarioActualView(APIView):
     """

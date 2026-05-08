@@ -1,7 +1,7 @@
 import uuid
 from django.db import transaction
 from django.utils import timezone
-from erp.models import Factura, MetodoPago, Detallefactura, Transaccionpago
+from apps.facturacion.models import Factura, MetodoPago, Detallefactura, Transaccionpago
 from apps.inventario.services.stock_service import reducir_stock_item
 
 def afectar_inventario_por_venta(factura):

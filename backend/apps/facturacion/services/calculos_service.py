@@ -1,6 +1,6 @@
 from decimal import Decimal, ROUND_HALF_UP
 from django.db.models import F
-from erp.models import Detallefactura # Ajustar importación según tu estructura
+from apps.facturacion.models import Detallefactura # Ajustar importación según tu estructura
 
 def recalcular_y_guardar_factura(factura):
     """

@@ -1,5 +1,6 @@
 from rest_framework import serializers
-from erp.models import Factura, Detallefactura, MetodoPago, Transaccionpago, ConfiguracionCorrelativo
+from apps.facturacion.models import Factura, Detallefactura, MetodoPago, Transaccionpago, Cupondescuento, Devolucion
+from apps.configuracion.models import ConfiguracionCorrelativo
 
 class MetodoPagoSerializer(serializers.ModelSerializer):
     class Meta:
@@ -36,3 +37,13 @@ class ConfiguracionCorrelativoWriteSerializer(serializers.ModelSerializer):
     class Meta:
         model = ConfiguracionCorrelativo
         fields = ['prefijo', 'current_number', 'number_length', 'password']
+
+class CupondescuentoSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Cupondescuento
+        fields = '__all__'
+
+class DevolucionSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Devolucion
+        fields = '__all__'

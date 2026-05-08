@@ -1,6 +1,6 @@
 # apps/inventario/api/views_operaciones.py
 from rest_framework import viewsets, permissions
-from erp.models import MovimientoInventario, Reservastock, Lecturacodigobarras
+from apps.inventario.models import MovimientoInventario, Reservastock, Lecturacodigobarras
 from apps.inventario.api.serializers import MovimientoInventarioSerializer, ReservastockSerializer, LecturacodigobarrasSerializer
 
 class MovimientoInventarioViewSet(viewsets.ModelViewSet):

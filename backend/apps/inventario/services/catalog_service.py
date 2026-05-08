@@ -1,7 +1,7 @@
 # apps/inventario/core/catalog_service.py
 from django.db.models import F, Value, CharField
 from django.db.models.functions import Concat
-from erp.models import Producto, Variacionproducto, Categoriaproducto
+from apps.inventario.models import Producto, Variacionproducto, Categoriaproducto
 
 def obtener_inventario_unificado(categoria_id=None):
     """

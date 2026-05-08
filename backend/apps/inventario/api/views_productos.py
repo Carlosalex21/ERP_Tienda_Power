@@ -1,6 +1,6 @@
 # apps/inventario/api/views_productos.py
 from rest_framework import viewsets, permissions
-from erp.models import Producto, Variacionproducto
+from apps.inventario.models import Producto, Variacionproducto
 from apps.inventario.api.serializers import ProductoSerializer, VariacionproductoSerializer
 
 class ProductoViewSet(viewsets.ModelViewSet):

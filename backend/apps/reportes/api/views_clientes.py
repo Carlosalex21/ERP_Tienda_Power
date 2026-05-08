@@ -4,7 +4,7 @@ from rest_framework.views import APIView
 from rest_framework.permissions import IsAuthenticated
 from http import HTTPStatus
 
-from erp.models import Reportecliente
+from apps.reportes.models import Reportecliente
 from apps.reportes.api.serializers import ReporteclienteSerializer
 from apps.common.utils import generar_pdf, generar_excel
 

@@ -1,12 +1,11 @@
-from django.urls import path
-# from .views import *
+from django.urls import path, include
+from rest_framework.routers import DefaultRouter
+from .api.views import IvaViewSet, TipoDocumentoViewSet
+
+router = DefaultRouter()
+router.register(r'iva', IvaViewSet, basename='iva')
+router.register(r'tipos-documento', TipoDocumentoViewSet, basename='tipos-documento')
 
 urlpatterns = [
-    path("tipos-documento/", TipodocumentofiscalList.as_view(), name='tipos-documentos'),
-    path("correlativo/", ConfiguracionCorrelativoManageView.as_view()),
-    path("iva/", ConfiguracionivaList.as_view()),
-    path("iva/<int:id>/", ConfiguracionivaGet.as_view()),
-    path("iva/crear/", ConfiguracionivaCRUD.as_view()),
-    path("iva/editar/<int:id>/", ConfiguracionivaCRUD.as_view()),
-    path("iva/eliminar/<int:id>/", ConfiguracionivaCRUD.as_view()),
+    path('', include(router.urls)),
 ]

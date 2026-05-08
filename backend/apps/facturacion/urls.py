@@ -5,6 +5,8 @@ from .api.views_facturas import FacturaViewSet, AnularFacturaView
 from .api.views_impresion import FacturaImprimirView
 from .api.views_descuentos import ActualizarDescuentoDetalleView, ActualizarDescuentoGlobalView, CupondescuentoViewSet
 from .api.views_finanzas import MetodoPagoViewSet, TransaccionpagoViewSet, DevolucionViewSet, TransaccionpagoByMetodo
+from .api.views_public_catalog import PublicCatalogView
+from .api.views_external_order import CreateExternalOrderCUD
 
 router = DefaultRouter()
 router.register(r'lista', FacturaViewSet, basename='factura')
@@ -14,12 +16,10 @@ router.register(r'cupones', CupondescuentoViewSet, basename='cupon')
 router.register(r'devoluciones', DevolucionViewSet, basename='devolucion')
 
 urlpatterns = [
-    # Facturas
-    path("factura/", FacturaList.as_view()),
-    path("factura/<int:id>/", FacturaGet.as_view()),
-    path("factura/crear/", FacturaCreateUpdateDelete.as_view()),
-    path("factura/editar/<int:id>/", FacturaCreateUpdateDelete.as_view()),
-    path("factura/eliminar/<int:id>/", FacturaCreateUpdateDelete.as_view()),
+    # Router viewsets (Facturas, MetodosPago, Transacciones, etc)
+    path('', include(router.urls)),
+
+    # Acciones especiales Facturas
     path("factura/<int:pk>/anular/", AnularFacturaView.as_view(), name='anular-factura'),
     path("factura/reset/", ResetFacturaView.as_view()),
     path("factura-pendiente/", FacturaPendienteView.as_view()),
@@ -32,18 +32,9 @@ urlpatterns = [
     
     # Transacciones y Pagos
     path("pago/", PagoView.as_view()),
-    path("metodo-pago/", MetodoPagoList.as_view()),
-    path("metodo-pago/<int:id>/", MetodoPagoCRUD.as_view()),
-    path("metodo-pago/crear/", MetodoPagoCRUD.as_view()),
-    path("metodo-pago/editar/<int:id>/", MetodoPagoCRUD.as_view()),
-    path("metodo-pago/eliminar/<int:id>/", MetodoPagoCRUD.as_view()),
-    path("transaccion-pago/", TransaccionpagoList.as_view()),
-    path("transaccion-pago/<int:id>/", TransaccionpagoGet.as_view()),
-    path("transaccion-pago/crear/", TransaccionpagoCreateUpdateDelete.as_view()),
-    path("transaccion-pago/editar/<int:id>/", TransaccionpagoCreateUpdateDelete.as_view()),
-    path("transaccion-pago/eliminar/<int:id>/", TransaccionpagoCreateUpdateDelete.as_view()),
     path("transaccion-metodo/", TransaccionpagoByMetodo.as_view()),
     
-    # Cierre de Caja
-    path('accounting/cash-closing-report/', CashClosingReportView.as_view(), name='cash-closing-report'),
+    # API Pública SaaS
+    path("public/catalog/", PublicCatalogView.as_view(), name="public-catalog"),
+    path("public/external-order/crear/", CreateExternalOrderCUD.as_view(), name="create-external-order"),
 ]

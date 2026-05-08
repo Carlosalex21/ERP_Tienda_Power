@@ -1,5 +1,6 @@
 from django.contrib import admin
-from .models import UserMetadata, Rol,Tipodocumentofiscal
+from apps.usuarios.models import UserMetadata, Rol
+from apps.configuracion.models import Tipodocumentofiscal
 
 @admin.register(UserMetadata)
 class UserMetadataAdmin(admin.ModelAdmin):

@@ -1,5 +1,8 @@
 from rest_framework import serializers
 
+from apps.reportes.models import Reportecliente, Reporteinventario, Reporteventa
+from apps.facturacion.models import Factura
+
 class DashboardResponseSerializer(serializers.Serializer):
     """
     Serializer para validar la estructura de salida del Dashboard.
@@ -20,3 +23,34 @@ class VentaReporteSerializer(serializers.Serializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     total = serializers.DecimalField(max_digits=10, decimal_places=2)
     estado = serializers.CharField()
+
+class ReporteclienteSerializer(serializers.ModelSerializer):
+    cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    producto_mas_comprado_nombre = serializers.CharField(source='producto_mas_comprado.nombre', read_only=True)
+    class Meta:
+        model = Reportecliente
+        fields = '__all__'
+
+class FacturaReportSerializer(serializers.ModelSerializer):
+    cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    metodo_pago_nombre = serializers.CharField(source='metodo_pago.nombre', read_only=True)
+    class Meta:
+        model = Factura
+        fields = ['id', 'correlativo', 'fecha_operacion', 'cliente_nombre', 'total', 'estado', 'metodo_pago_nombre']
+
+class FacturaReporteSerializer(serializers.ModelSerializer):
+    cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
+    detalles = serializers.SerializerMethodField()
+    class Meta:
+        model = Factura
+        fields = ['id', 'correlativo', 'fecha_operacion', 'cliente_nombre', 'total', 'estado', 'detalles']
+
+    def get_detalles(self, obj):
+        return [
+            {
+                "producto": d.producto.nombre, 
+                "cantidad": d.cantidad, 
+                "precio_unitario": d.precio_unitario,
+                "total_linea": d.total_linea
+            } for d in obj.detalles.all()
+        ]

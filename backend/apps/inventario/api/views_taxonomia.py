@@ -1,6 +1,6 @@
 # apps/inventario/api/views_taxonomia.py
 from rest_framework import viewsets, permissions
-from erp.models import Categoriaproducto, Productocategoria, Atributo
+from apps.inventario.models import Categoriaproducto, Productocategoria, Atributo
 from apps.inventario.api.serializers import CategoriaSerializer, ProductocategoriaSerializer, AtributoSerializer
 
 class CategoriaViewSet(viewsets.ModelViewSet):

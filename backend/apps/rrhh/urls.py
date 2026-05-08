@@ -1,5 +1,8 @@
 from django.urls import path
-# from .views import *
+from .api.views import (
+    AttendanceSummaryView, ClockInView, ClockOutView, BreakView,
+    HorarioDetailView, DiaFestivoListView, DiaFestivoDetailView
+)
 
 urlpatterns = [
     path("attendance-summary/", AttendanceSummaryView.as_view(), name='attendance-summary'),

@@ -1,6 +1,6 @@
 # apps/inventario/api/views_almacen.py
 from rest_framework import viewsets, permissions
-from erp.models import Almacen, Inventario
+from apps.inventario.models import Almacen, Inventario
 from apps.inventario.api.serializers import AlmacenSerializer, InventarioSerializer
 
 class AlmacenViewSet(viewsets.ModelViewSet):

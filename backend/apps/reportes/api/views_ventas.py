@@ -7,7 +7,7 @@ from rest_framework import status
 from apps.reportes.core.ventas_report_service import obtener_cierre_caja_service, obtener_reporte_ventas_service
 
 # Importamos los serializers de tu código original
-from erp.serializers import FacturaReportSerializer, VentaReporteSerializer, FacturaReporteSerializer
+from apps.reportes.api.serializers import FacturaReportSerializer, VentaReporteSerializer, FacturaReporteSerializer
 
 class CashClosingReportView(APIView):
     """Genera el reporte de cierre de caja para el día actual o uno específico."""

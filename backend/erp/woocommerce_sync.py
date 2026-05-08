@@ -1,6 +1,6 @@
 from woocommerce import API
 from django.conf import settings
-from .models import Producto, Variacionproducto
+
 
 def get_wc_api():
     """

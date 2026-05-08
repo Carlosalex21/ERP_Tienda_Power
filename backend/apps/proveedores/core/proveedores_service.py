@@ -1,7 +1,7 @@
 # apps/proveedores/core/proveedores_service.py
 from django.db import transaction
 from apps.proveedores.models import Proveedor
-# from erp.models import Pedidoproveedor (Ejemplo)
+# from apps.proveedores.models import Pedidoproveedor (Ejemplo)
 
 def desactivar_proveedor_service(proveedor_id):
     """

@@ -2,7 +2,8 @@ from rest_framework import serializers
 from rest_framework_simplejwt.serializers import TokenObtainPairSerializer
 from django.contrib.auth import get_user_model
 from django.db import transaction
-from erp.models import Rol, Sesionusuario, Logactividad, UserMetadata, Almacen
+from apps.usuarios.models import Rol, Sesionusuario, Logactividad, UserMetadata
+from apps.inventario.models import Almacen
 
 User = get_user_model()
 

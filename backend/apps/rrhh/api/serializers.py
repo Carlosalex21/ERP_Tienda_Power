@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from erp.models import Asistencia, Horario, DiaFestivo, Descanso
+from apps.rrhh.models import Asistencia, Horario, DiaFestivo, Descanso
 
 class DescansoSerializer(serializers.ModelSerializer):
     class Meta:
