@@ -1,51 +1,41 @@
+from rest_framework import viewsets, status
 from rest_framework.views import APIView
-from rest_framework import viewsets, permissions, status
-from rest_framework.decorators import action
 from rest_framework.response import Response
+from drf_spectacular.utils import extend_schema
 
-from apps.facturacion.models import Factura
-from apps.facturacion.api.serializers import FacturaSerializer
-from apps.inventario.services.stock_service import restaurar_stock_item
+from ..models import Factura
+from .serializers import FacturaSerializer
+from apps.core.permissions import IsTenantAdmin, IsAdminOrVendedor
+from ..services.factura_service import anular_factura_y_restaurar_stock, FacturaAnulacionError
 
-class FacturaViewSet(viewsets.ReadOnlyModelViewSet):
-    """Listado y detalle de facturas. Solo lectura por seguridad fiscal."""
-    queryset = Factura.objects.all().order_by("-fecha_operacion")
+class FacturaViewSet(viewsets.ModelViewSet):
+    """
+    ViewSet para la gestión completa de Facturas (Listar, Crear, Obtener, Actualizar, Eliminar).
+    """
+    queryset = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').prefetch_related('detalles__producto')
     serializer_class = FacturaSerializer
-    permission_classes = [permissions.IsAuthenticated]
-
-    @action(detail=True, methods=['post'])
-    def anular(self, request, pk=None):
-        """Lógica de anulación con restauración de inventario."""
-        factura = self.get_object()
-        if factura.estado == 'cancelada':
-            return Response({"error": "Ya está anulada"}, status=status.HTTP_400_BAD_REQUEST)
-
-        # Restaurar Stock usando el servicio de inventario
-        for detalle in factura.detalles.all():
-            item = detalle.variante if detalle.variante else detalle.producto
-            restaurar_stock_item(item, detalle.cantidad)
-
-        factura.estado = 'cancelada'
-        factura.save()
-        return Response({"mensaje": "Factura anulada y stock devuelto."})
+    
+    def get_permissions(self):
+        """
+        Asigna permisos basados en la acción.
+        """
+        if self.action in ['list', 'retrieve', 'create', 'update', 'partial_update']:
+            # Vendedores y Admins pueden ver, crear y editar facturas.
+            self.permission_classes = [IsAdminOrVendedor]
+        elif self.action == 'destroy':
+            # Solo Admins pueden borrar facturas.
+            self.permission_classes = [IsTenantAdmin]
+        return super().get_permissions()
 
 class AnularFacturaView(APIView):
-    """Vista individual para anular una factura por su PK."""
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsTenantAdmin]
 
+    @extend_schema(summary="Anular una Factura", responses={200: {"description": "Factura anulada y stock restaurado."}})
     def post(self, request, pk):
         try:
-            factura = Factura.objects.get(pk=pk)
-            if factura.estado == 'cancelada':
-                return Response({"error": "Ya está anulada"}, status=status.HTTP_400_BAD_REQUEST)
-
-            # Restaurar Stock
-            for detalle in factura.detalles.all():
-                item = detalle.variante if detalle.variante else detalle.producto
-                restaurar_stock_item(item, detalle.cantidad)
-
-            factura.estado = 'cancelada'
-            factura.save()
-            return Response({"mensaje": "Factura anulada y stock devuelto."})
+            anular_factura_y_restaurar_stock(factura_id=pk)
+            return Response({"message": "Factura anulada y stock restaurado exitosamente."})
         except Factura.DoesNotExist:
-            return Response({"error": "Factura no encontrada"}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Factura no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+        except FacturaAnulacionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

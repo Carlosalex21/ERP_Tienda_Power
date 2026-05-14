@@ -14,3 +14,6 @@ from django.core.wsgi import get_wsgi_application
 os.environ.setdefault("DJANGO_SETTINGS_MODULE", "backend.settings")
 
 application = get_wsgi_application()
+
+# Importa Celery para que se cargue con Django
+from .celery import app as celery_app

@@ -1,21 +1,24 @@
 # apps/inventario/core/stock_service.py
 from django.db import transaction
 from apps.inventario.models import Producto, Variacionproducto, MovimientoInventario, Inventario
-from erp.woocommerce_sync import actualizar_stock_woocommerce # Asegúrate de que esta ruta sea correcta
+# from erp.woocommerce_sync import actualizar_stock_woocommerce # Importación local para la tarea
+from celery import shared_task
+
+@shared_task
+def woocommerce_sync_task_celery(sku, nueva_cantidad):
+    """
+    Tarea de Celery para sincronizar stock con WooCommerce.
+    """
+    from erp.woocommerce_sync import actualizar_stock_woocommerce
+    try:
+        print(f"Sincronizando SKU: {sku} con cantidad: {nueva_cantidad}")
+        actualizar_stock_woocommerce(sku=sku, nueva_cantidad=nueva_cantidad)
+    except Exception as e:
+        print(f"Error sincronizando {sku} con WooCommerce: {str(e)}")
 
 def sincronizar_item_woocommerce(item):
-    """
-    Servicio aislado para manejar la comunicación con WooCommerce.
-    A futuro, aquí puedes implementar Celery (tareas en segundo plano)
-    para que la venta no se quede esperando la respuesta de internet.
-    """
     if hasattr(item, 'sku') and item.sku:
-        try:
-            print(f"Sincronizando SKU: {item.sku} con cantidad: {item.cantidad}")
-            actualizar_stock_woocommerce(sku=item.sku, nueva_cantidad=item.cantidad)
-        except Exception as e:
-            # Aquí podrías guardar el error en un log para reintentar después
-            print(f"Error sincronizando {item.sku} con WooCommerce: {str(e)}")
+        woocommerce_sync_task_celery.delay(sku=item.sku, nueva_cantidad=item.cantidad)
 
 @transaction.atomic
 def reducir_stock_item(item, cantidad_a_reducir):

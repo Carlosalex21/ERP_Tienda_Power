@@ -1,3 +1,4 @@
+import sys
 from pathlib import Path
 import os
 from datetime import timedelta
@@ -27,6 +28,7 @@ REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
         'rest_framework_simplejwt.authentication.JWTAuthentication',
     ),
+    'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
 }
 
 # =========================================================
@@ -36,6 +38,7 @@ REST_FRAMEWORK = {
 # Aplicaciones Compartidas (Esquema 'public')
 SHARED_APPS = [
     'django_tenants', 
+    'drf_spectacular',
 
     # Apps de Django globales
     "django.contrib.admin",
@@ -66,6 +69,7 @@ TENANT_APPS = [
     'apps.clientes',
     'apps.proveedores',
     'apps.inventario',
+    'apps.pagos', # Nueva app de pagos
     'apps.facturacion',
     'apps.rrhh',
     'apps.reportes',
@@ -74,7 +78,8 @@ TENANT_APPS = [
     #'erp',
     #'tienda',
 ]
-INSTALLED_APPS = list(set(SHARED_APPS + TENANT_APPS))
+# La forma correcta de combinar las listas, manteniendo el orden y sin duplicados.
+INSTALLED_APPS = SHARED_APPS + [app for app in TENANT_APPS if app not in SHARED_APPS]
 
 # Definición de modelos para Tenants y Dominios
 TENANT_MODEL = "tenants.Client"
@@ -85,12 +90,15 @@ DATABASE_ROUTERS = (
     'django_tenants.routers.TenantSyncRouter',
 )
 
+# CONFIGURACIÓN DE ENRUTAMIENTO (URLs) MULTI-TENANT
+ROOT_URLCONF = "backend.urls_tenants"
+PUBLIC_SCHEMA_URLCONF = "backend.urls_public" 
 
 MIDDLEWARE = [
-    "django_tenants.middleware.main.TenantMainMiddleware", 
+    "django_tenants.middleware.main.TenantMainMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # Para servir archivos estáticos en producción
-    "django.contrib.sessions.middleware.SessionMiddleware",
     "corsheaders.middleware.CorsMiddleware",
     "django.middleware.common.CommonMiddleware",
     #"django.middleware.csrf.CsrfViewMiddleware", temporalmente comentado
@@ -112,7 +120,6 @@ CORS_ALLOW_HEADERS = [
 
 CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:8080').split(',')
 X_FRAME_OPTIONS = 'SAMEORIGIN'
-ROOT_URLCONF = "backend.urls"
 
 TEMPLATES = [
     {
@@ -133,30 +140,26 @@ TEMPLATES = [
 WSGI_APPLICATION = "backend.wsgi.application"
 
 
-# =========================================================
 # BASE DE DATOS (Multi-Tenant)
-# =========================================================
-
 if 'DATABASE_URL' in os.environ:
     # Producción (Coolify)
     DATABASES = {
         'default': dj_database_url.config(conn_max_age=600, ssl_require=False)
     }
-    # Forzamos el motor de tenants para la URL de producción
+    # Usamos el motor de base de datos de django-tenants para asegurar la funcionalidad multi-tenant.
     DATABASES['default']['ENGINE'] = 'django_tenants.postgresql_backend'
 else:
     # Desarrollo Local
     DATABASES = {
         'default': {
-            'ENGINE': 'django_tenants.postgresql_backend', 
+            'ENGINE': 'django_tenants.postgresql_backend',
             'NAME': 'emp_system_saas', # 
             'USER': 'postgres',
-            'PASSWORD': 'carlosalex', # CAMBIARLO POR PASSWORD LOCAL
+            'PASSWORD': os.getenv('DB_PASSWORD', "carlosalex"), # CAMBIARLO POR PASSWORD LOCAL
             'HOST': 'localhost',
             'PORT': '5432',
         }
     }
-
 
 # Password validation
 AUTH_PASSWORD_VALIDATORS = [
@@ -200,8 +203,27 @@ WOOCOMMERCE_CONFIG = {
     "timeout": 20 
 }
 
-# Local Settings override
-try:
-    from .local_settings import *
-except ImportError:
-    pass
+# Configuración de Celery
+CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')
+CELERY_RESULT_BACKEND = os.getenv('CELERY_RESULT_BACKEND', 'redis://localhost:6379/0')
+CELERY_ACCEPT_CONTENT = ['json']
+CELERY_TASK_SERIALIZER = 'json'
+CELERY_RESULT_SERIALIZER = 'json'
+
+
+SPECTACULAR_SETTINGS = {
+    'TITLE': 'ERP SaaS API Documentación',
+    'DESCRIPTION': 'Gestión de Inventario, Facturación y RRHH.',
+    'VERSION': '1.0.0',
+    'SERVE_INCLUDE_SCHEMA': False,
+    'URLCONF': None, 
+    'SCHEMA_PATH_PREFIX': r'/api/v1/',
+    'COMPONENT_SPLIT_PATCH': True,
+    'COMPONENT_SPLIT_REQUEST': True,
+    # Configuramos el comportamiento del Swagger UI
+    'SWAGGER_UI_SETTINGS': {
+        'persistAuthorization': True,  # Mantiene el token aunque recargue el navegador
+        'displayOperationId': False,
+        'filter': True,                # Añade una barra de búsqueda rapida para endpoints
+    },
+}

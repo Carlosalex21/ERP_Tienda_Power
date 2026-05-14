@@ -1,19 +1,13 @@
-from django.contrib import admin
 from django.urls import path, include
-from django.conf import settings
-from django.conf.urls.static import static
+from rest_framework.routers import DefaultRouter
+from pagos.api.views import MetodoPagoConfigViewSet, PagoMovilConfigViewSet, ZelleConfigViewSet, TransaccionPasarelaViewSet
+
+router = DefaultRouter()
+router.register(r'metodos-config', MetodoPagoConfigViewSet, basename='metodo-pago-config')
+router.register(r'pagomovil-config', PagoMovilConfigViewSet, basename='pagomovil-config')
+router.register(r'zelle-config', ZelleConfigViewSet, basename='zelle-config')
+router.register(r'transacciones-pasarela', TransaccionPasarelaViewSet, basename='transaccion-pasarela')
 
 urlpatterns = [
-    path('admin/', admin.site.urls),
-    
-    # Módulos del Sistema
-    path('api/v1/auth/', include('apps.usuarios.urls')),
-    path('api/v1/facturacion/', include('apps.facturacion.urls')),
-    path('api/v1/inventario/', include('apps.inventario.urls')),
-    path('api/v1/rrhh/', include('apps.rrhh.urls')),
-    path('api/v1/reportes/', include('apps.reportes.urls')),
-    path('api/v1/configuracion/', include('apps.configuracion.urls')),
-    path('api/v1/clientes/', include('apps.clientes.urls')),
-    path('api/v1/proveedores/', include('apps.proveedores.urls')),
-
-] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
+    path('', include(router.urls)),
+]

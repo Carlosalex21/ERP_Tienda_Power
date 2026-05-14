@@ -1,45 +1,80 @@
-from rest_framework import generics, permissions, status
+from rest_framework import generics, permissions, status, viewsets
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from django.utils import timezone
-from datetime import datetime, timedelta
+from datetime import date, datetime, timedelta
+from drf_spectacular.utils import extend_schema
+from apps.core.permissions import IsTenantAdmin
 
-from apps.rrhh.models import Horario, DiaFestivo, Asistencia, Descanso
-from apps.rrhh.api.serializers import HorarioSerializer, DiaFestivoSerializer, AsistenciaSerializer
+from apps.rrhh.models import Horario, DiaFestivo, Asistencia, Descanso, Sucursal
+from apps.rrhh.api.serializers import (
+    HorarioSerializer, DiaFestivoSerializer, AsistenciaSerializer, SucursalSerializer,
+    AttendanceSummaryResponseSerializer,
+)
+
+def get_working_days(year, month):
+    """Calcula los días laborables (L-V) de un mes."""
+    from calendar import monthrange
+    _, num_days = monthrange(year, month)
+    working_days = 0
+    for day in range(1, num_days + 1):
+        if date(year, month, day).weekday() < 5: # Lunes=0, Viernes=4
+            working_days += 1
+    return working_days
+
+class SucursalViewSet(viewsets.ModelViewSet):
+    """Administra las sucursales del tenant."""
+    queryset = Sucursal.objects.all()
+    serializer_class = SucursalSerializer
+    permission_classes = [IsTenantAdmin]
 
 class HorarioDetailView(APIView):
-    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    permission_classes = [IsTenantAdmin]
+    serializer_class = HorarioSerializer
 
-    def get(self, request, pk=1):
-        try:
-            horario = Horario.objects.get(pk=pk)
-            serializer = HorarioSerializer(horario)
-            return Response(serializer.data)
-        except Horario.DoesNotExist:
-            return Response({"detail": "Not found."}, status=status.HTTP_404_NOT_FOUND)
+    @extend_schema(
+        summary="Obtener el horario de la empresa",
+        responses=HorarioSerializer
+    )
+    def get(self, request, pk=None):
+        # Se asume un único horario por empresa, con pk=1
+        horario, _ = Horario.objects.get_or_create(pk=1)
+        serializer = self.serializer_class(horario)
+        return Response(serializer.data)
 
-    def put(self, request, pk=1):
+    @extend_schema(
+        summary="Actualizar el horario de la empresa",
+        request=HorarioSerializer,
+        responses=HorarioSerializer
+    )
+    def put(self, request, pk=None):
+        # Se asume un único horario por empresa, con pk=1
         horario, created = Horario.objects.update_or_create(
-            pk=pk,
+            pk=1,
             defaults=request.data
         )
-        serializer = HorarioSerializer(horario)
+        serializer = self.serializer_class(horario)
         status_code = status.HTTP_201_CREATED if created else status.HTTP_200_OK
         return Response(serializer.data, status=status_code)
 
 class DiaFestivoListView(generics.ListCreateAPIView):
-    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    permission_classes = [IsTenantAdmin]
     queryset = DiaFestivo.objects.all().order_by('fecha')
     serializer_class = DiaFestivoSerializer
 
 class DiaFestivoDetailView(generics.DestroyAPIView):
-    permission_classes = [permissions.IsAuthenticated, permissions.IsAdminUser]
+    permission_classes = [IsTenantAdmin]
     queryset = DiaFestivo.objects.all()
     serializer_class = DiaFestivoSerializer
 
 class AttendanceSummaryView(APIView):
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Obtiene el resumen de asistencia del mes para el usuario autenticado",
+        responses=AttendanceSummaryResponseSerializer
+    )
     def get(self, request):
         today = timezone.localdate()
         start_of_month = today.replace(day=1)
@@ -47,11 +82,13 @@ class AttendanceSummaryView(APIView):
         asistencia_hoy = Asistencia.objects.filter(usuario=request.user, fecha=today).first()
         current_status = asistencia_hoy.estado_actual if asistencia_hoy else 'out'
 
-        asistencias_mes = Asistencia.objects.filter(usuario=request.user, fecha__range=[start_of_month, today])
+        asistencias_mes = Asistencia.objects.filter(usuario=request.user, fecha__range=[start_of_month, today]).prefetch_related('descansos')
         festivos_mes = DiaFestivo.objects.filter(fecha__range=[start_of_month, today]).count()
 
+        total_working_days = get_working_days(today.year, today.month) - festivos_mes
+
         summary = {
-            "total_working_days": 22,
+            "total_working_days": total_working_days,
             "absent_days": asistencias_mes.filter(estado='Ausente').count(),
             "present_days": asistencias_mes.filter(estado='Presente').count(),
             "half_days": asistencias_mes.filter(estado='Medio Día').count(),
@@ -60,11 +97,17 @@ class AttendanceSummaryView(APIView):
         }
 
         log_serializer = AsistenciaSerializer(asistencias_mes, many=True)
-        data = {"current_status": current_status, "summary": summary, "log": log_serializer.data}
-        return Response(data)
+        response_data = {"current_status": current_status, "summary": summary, "log": log_serializer.data}
+        return Response(response_data)
 
 class ClockInView(APIView):
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Registra la entrada del usuario (Clock In)",
+        request=None,
+        responses={200: None}
+    )
     def post(self, request):
         now = timezone.now()
         local_date = timezone.localdate()
@@ -91,6 +134,12 @@ class ClockInView(APIView):
 
 class ClockOutView(APIView):
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Registra la salida del usuario (Clock Out)",
+        request=None,
+        responses={200: None}
+    )
     def post(self, request):
         Asistencia.objects.filter(usuario=request.user, fecha=timezone.localdate()).update(
             hora_salida=timezone.now(),
@@ -100,6 +149,11 @@ class ClockOutView(APIView):
 
 class BreakView(APIView):
     permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Inicia o finaliza un descanso para el usuario",
+        request={'application/json': {'example': {'start': True}}}
+    )
     def post(self, request):
         start_break = request.data.get('start', True)
         asistencia = Asistencia.objects.get(usuario=request.user, fecha=timezone.localdate())

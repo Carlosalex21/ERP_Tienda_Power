@@ -29,10 +29,10 @@ class Factura(models.Model):
     orden = models.OneToOneField('Orden', models.DO_NOTHING, blank=True, null=True)
     fecha_operacion = models.DateTimeField()
     correlativo = models.CharField(unique=True, max_length=50, blank=True, null=True)
-    subtotal = models.DecimalField(max_digits=10, decimal_places=2)
+    subtotal = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     descuento_global = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
-    iva_total = models.DecimalField(max_digits=10, decimal_places=2)
-    total = models.DecimalField(max_digits=10, decimal_places=2)
+    iva_total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=10, decimal_places=2, default=0)
     almacen = models.ForeignKey("inventario.Almacen", models.DO_NOTHING, blank=True, null=True)
     estado = models.CharField(max_length=20, blank=True, null=True)
     metodo_pago = models.ForeignKey(MetodoPago, models.DO_NOTHING, blank=True, null=True)
@@ -100,9 +100,9 @@ class Detallefactura(models.Model):
     cantidad = models.IntegerField()
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
     descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
-    subtotal_linea = models.DecimalField(max_digits=10, decimal_places=2)
-    iva_linea = models.DecimalField(max_digits=10, decimal_places=2)
-    total_linea = models.DecimalField(max_digits=10, decimal_places=2)
+    subtotal_linea = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    iva_linea = models.DecimalField(max_digits=10, decimal_places=2, default=0)
+    total_linea = models.DecimalField(max_digits=10, decimal_places=2, default=0)
 
     class Meta:
         db_table = 'DetalleFactura'

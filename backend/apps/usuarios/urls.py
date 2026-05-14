@@ -1,19 +1,14 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from rest_framework_simplejwt.views import TokenRefreshView, TokenVerifyView
-from .api.views_auth import CustomTokenObtainPairView
-from .api.views_users import EmpleadoViewSet, RolViewSet
+from .api.views_auth import CustomTokenObtainPairView, UserMeView
+from .api.views_management import UserManagementViewSet
 
 router = DefaultRouter()
-router.register(r'empleados', EmpleadoViewSet, basename='empleado')
-router.register(r'roles', RolViewSet, basename='rol')
+router.register(r'management', UserManagementViewSet, basename='user-management')
 
 urlpatterns = [
-    # API viewsets
+    path('token/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
+    path('me/', UserMeView.as_view(), name='user-me'),
+    # Rutas para que el admin del tenant gestione a sus usuarios
     path('', include(router.urls)),
-
-    # JWT Tokens
-    path('login/', CustomTokenObtainPairView.as_view(), name='token_obtain_pair'),
-    path('token/refresh/', TokenRefreshView.as_view(), name='token_refresh'),
-    path('token/verify/', TokenVerifyView.as_view(), name='token_verify'),
 ]

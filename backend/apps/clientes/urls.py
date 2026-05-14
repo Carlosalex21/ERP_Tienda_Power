@@ -1,10 +1,7 @@
 from django.urls import path
-from .api.views import ClienteList, ObtenerclienteAPIView, ClienteCreateUpdateDelete
+from .api.views import ClienteListCreateView, ClienteRetrieveUpdateDestroyView
 
 urlpatterns = [
-    path("cliente/", ClienteList.as_view()),
-    path("cliente/<int:id>/", ObtenerclienteAPIView.as_view()),
-    path("cliente/crear/", ClienteCreateUpdateDelete.as_view()),
-    path("cliente/editar/<int:id>/", ClienteCreateUpdateDelete.as_view()),
-    path("cliente/eliminar/<int:id>/", ClienteCreateUpdateDelete.as_view()),
+    path('', ClienteListCreateView.as_view(), name='cliente-list-create'),
+    path('<int:pk>/', ClienteRetrieveUpdateDestroyView.as_view(), name='cliente-detail'),
 ]

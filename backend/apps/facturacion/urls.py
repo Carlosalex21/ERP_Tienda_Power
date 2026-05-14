@@ -7,6 +7,7 @@ from .api.views_descuentos import ActualizarDescuentoDetalleView, ActualizarDesc
 from .api.views_finanzas import MetodoPagoViewSet, TransaccionpagoViewSet, DevolucionViewSet, TransaccionpagoByMetodo
 from .api.views_public_catalog import PublicCatalogView
 from .api.views_external_order import CreateExternalOrderCUD
+from .api.views_facturas import AnularFacturaView
 
 router = DefaultRouter()
 router.register(r'lista', FacturaViewSet, basename='factura')
@@ -20,10 +21,10 @@ urlpatterns = [
     path('', include(router.urls)),
 
     # Acciones especiales Facturas
-    path("factura/<int:pk>/anular/", AnularFacturaView.as_view(), name='anular-factura'),
     path("factura/reset/", ResetFacturaView.as_view()),
     path("factura-pendiente/", FacturaPendienteView.as_view()),
     path("factura-imprimir/<int:factura_id>/", FacturaImprimirView.as_view(), name="factura-imprimir"),
+    path('facturas/<int:pk>/anular/', AnularFacturaView.as_view(), name='anular-factura'),
     
     # Descuentos y POS
     path("detallefactura/actualizar-descuento/", ActualizarDescuentoDetalleView.as_view()),

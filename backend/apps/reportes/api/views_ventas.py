@@ -2,6 +2,9 @@ from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
+from drf_spectacular.utils import extend_schema, OpenApiParameter
+from drf_spectacular.types import OpenApiTypes
+from apps.facturacion.models import Factura
 
 # Importamos nuestro servicio core
 from apps.reportes.core.ventas_report_service import obtener_cierre_caja_service, obtener_reporte_ventas_service
@@ -33,25 +36,27 @@ class CashClosingReportView(APIView):
 
 
 class ReporteventaView(APIView):
-    """Reporte general de ventas (sin detalles de productos)."""
     permission_classes = [IsAuthenticated]
-    
+
+    @extend_schema(
+        summary="Reporte de Ventas",
+        parameters=[
+            OpenApiParameter(name='fecha_inicio', description='Fecha de inicio (YYYY-MM-DD)', type=OpenApiTypes.DATE),
+            OpenApiParameter(name='fecha_fin', description='Fecha de fin (YYYY-MM-DD)', type=OpenApiTypes.DATE),
+        ]
+    )
     def get(self, request):
-        try:
-            # Delegamos al Core
-            queryset = obtener_reporte_ventas_service(
-                start_date_str=request.query_params.get("start_date"),
-                end_date_str=request.query_params.get("end_date"),
-                estado=request.query_params.get('estado')
-            )
-            
-            serializer = VentaReporteSerializer(queryset, many=True)
-            return Response({"reporte_detallado": serializer.data}, status=status.HTTP_200_OK)
-            
-        except ValueError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
-        except Exception as e:
-            return Response({"error": "Error interno del servidor."}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+        queryset = Factura.objects.select_related('cliente', 'usuario').order_by('-fecha_operacion')
+        fecha_inicio = request.query_params.get('fecha_inicio')
+        fecha_fin = request.query_params.get('fecha_fin')
+        if fecha_inicio and fecha_fin:
+            queryset = queryset.filter(fecha_operacion__range=[fecha_inicio, fecha_fin])
+        
+        serializer = VentaReporteSerializer(queryset, many=True)
+        return Response(serializer.data)
+
+class FacturaDetalleReporteView(APIView):
+    permission_classes = [IsAuthenticated]
 
 
 class FacturaDetalleReporteView(APIView):
@@ -62,7 +67,7 @@ class FacturaDetalleReporteView(APIView):
         try:
             # Delegamos al Core
             queryset = obtener_reporte_ventas_service(
-                start_date_str=request.query_params.get("start_date"),
+                start_date_str=request.query_params.get("fecha_inicio"), # Usar los mismos nombres que en ReporteventaView
                 end_date_str=request.query_params.get("end_date"),
                 estado=request.query_params.get('estado'),
                 cliente_id=request.query_params.get('cliente_id')

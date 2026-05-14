@@ -1,6 +1,8 @@
-from rest_framework.permissions import BasePermission, AllowAny
+from rest_framework.permissions import BasePermission, AllowAny, IsAuthenticated
 from rest_framework_simplejwt.views import TokenObtainPairView
-from .serializers import MyTokenObtainPairSerializer
+from .serializers import MyTokenObtainPairSerializer, UserMeSerializer
+from rest_framework.views import APIView
+from rest_framework.response import Response
 
 class IsAdmin(BasePermission):
     def has_permission(self, request, view):
@@ -12,3 +14,14 @@ class IsAdmin(BasePermission):
 class CustomTokenObtainPairView(TokenObtainPairView):
     permission_classes = [AllowAny]
     serializer_class = MyTokenObtainPairSerializer
+
+class UserMeView(APIView):
+    """
+    Vista para obtener los datos del usuario actualmente autenticado.
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = UserMeSerializer
+
+    def get(self, request):
+        serializer = self.serializer_class(request.user.metadata)
+        return Response(serializer.data)

@@ -1,7 +1,7 @@
 # apps/tenants/services/subscription_service.py
 from datetime import timedelta
 from django.utils import timezone
-from tenants.models import Subscription, Plan, Client
+from apps.tenants.models import Subscription, Plan, Client
 
 class PaymentGatewayService:
     """

@@ -2,7 +2,9 @@
 from rest_framework import viewsets, permissions
 from apps.inventario.models import Producto, Variacionproducto
 from apps.inventario.api.serializers import ProductoSerializer, VariacionproductoSerializer
+from drf_spectacular.utils import extend_schema
 
+@extend_schema(tags=['Inventario'])
 class ProductoViewSet(viewsets.ModelViewSet):
     queryset = Producto.objects.filter(activo=True).order_by("id")
     serializer_class = ProductoSerializer

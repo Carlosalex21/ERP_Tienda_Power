@@ -1,10 +1,13 @@
 {
-    "python.defaultInterpreterPath": "${workspaceFolder}\\env\\Scripts\\python.exe",
-    "python.envFile": "${workspaceFolder}\\.env",
+    "python.defaultInterpreterPath": "${workspaceFolder}/env/bin/python",
+    "python.envFile": "${workspaceFolder}/.env",
     "python.analysis.extraPaths": [
-        "./backend"
+        "${workspaceFolder}/backend",
+        "${workspaceFolder}/backend/apps"
     ],
-    "terminal.integrated.commandsToSkipShell": [
-        "\"python.analysis.diagnosticSeverityOverrides\": {     \"reportUnusedImport\": \"none\" }"
-    ]
+    "python.analysis.autoImportCompletions": true,
+    "python.analysis.diagnosticSeverityOverrides": {
+        "reportUnusedImport": "none"
+    },
+    "python.terminal.activateEnvInCurrentTerminal": true
 }
