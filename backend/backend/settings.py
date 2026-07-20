@@ -15,8 +15,10 @@ SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-local-dev-key-123456")
 # En producción (Coolify), DEBUG será 'False'.
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
-# En Coolify, pondrás tu dominio aquí, ej: "www.tusitio.com,tusitio.com"
-ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# --- Configuración de ALLOWED_HOSTS para Multi-Tenancy ---
+# Para depuración, permitimos todos los hosts. Esto elimina cualquier conflicto
+# con el middleware de tenants. En producción, esto debe ser más restrictivo.
+ALLOWED_HOSTS = ['*']
 
 
 SIMPLE_JWT = {
@@ -84,6 +86,7 @@ INSTALLED_APPS = SHARED_APPS + [app for app in TENANT_APPS if app not in SHARED_
 # Definición de modelos para Tenants y Dominios
 TENANT_MODEL = "tenants.Client"
 TENANT_DOMAIN_MODEL = "tenants.Domain"
+TENANT_DOMAIN = os.getenv('TENANT_DOMAIN', 'localhost:8000')
 
 # Enrutador de base de datos
 DATABASE_ROUTERS = (
@@ -107,7 +110,22 @@ MIDDLEWARE = [
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
 
-CORS_ALLOWED_ORIGINS = os.getenv('CORS_ALLOWED_ORIGINS', 'http://localhost:8080,http://127.0.0.1:8080').split(',')
+# --- Configuración de CORS ---
+# En desarrollo, puedes usar CORS_ALLOW_ALL_ORIGINS = True para simplicidad.
+# En producción, se recomienda ponerlo en False y usar una de las siguientes opciones.
+CORS_ALLOW_ALL_ORIGINS = os.getenv('CORS_ALLOW_ALL_ORIGINS', 'True') == 'True'
+
+# Esta es la forma automática y segura de permitir todos tus subdominios en producción.
+TENANT_DOMAIN_CLEAN = os.getenv('TENANT_DOMAIN', 'localhost').split(':')[0] # 'localhost:8000' -> 'localhost'
+CORS_ALLOWED_ORIGIN_REGEXES = [
+    # Permite el frontend de desarrollo
+    r"^http://localhost:3000\Z",
+    r"^http://127.0.0.1:3000\Z",
+    # Permite todos los subdominios de tu dominio de tenants
+    r"^https?://\w+\.{}\Z".format(TENANT_DOMAIN_CLEAN),
+]
+
+
 CORS_ALLOW_CREDENTIALS = True
 CORS_ALLOW_HEADERS = [
     "accept",
@@ -118,7 +136,7 @@ CORS_ALLOW_HEADERS = [
     "x-requested-with",
 ]
 
-CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:8080').split(',')
+CSRF_TRUSTED_ORIGINS = os.getenv('CSRF_TRUSTED_ORIGINS', 'http://localhost:3000,http://127.0.0.1:3000').split(',')
 X_FRAME_OPTIONS = 'SAMEORIGIN'
 
 TEMPLATES = [

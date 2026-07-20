@@ -32,12 +32,8 @@ class SubscriptionService:
             
         fecha_inicio = timezone.now()
         fecha_fin = fecha_inicio + timedelta(days=duration_days)
-        
-        # Para evitar problemas con OneToOneField si ya existe, podemos usar update_or_create
-        # Pero como la vieja fue marcada como cancelada, lo ideal sería que 'cliente' en Subscription 
-        # fuera ForeignKey si queremos historial. Dado que es OneToOne, la sobreescribimos o actualizamos.
         sub, created = Subscription.objects.update_or_create(
-            cliente=client,
+            client=client,
             defaults={
                 'plan': plan,
                 'estado': 'activa',

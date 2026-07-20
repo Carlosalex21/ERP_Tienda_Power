@@ -24,11 +24,12 @@ def procesar_pago_factura_service(factura_id, metodo_pago_id, monto_recibido, es
     """
     try:
         metodo = MetodoPago.objects.get(id=metodo_pago_id)
-        factura = Factura.objects.select_for_update().get(id=factura_id, estado="abierta")
+        # Hacemos la búsqueda más flexible para aceptar facturas en borrador o abiertas
+        factura = Factura.objects.select_for_update().get(id=factura_id, estado__in=["abierta", "borrador"])
     except MetodoPago.DoesNotExist:
         raise ValueError("Método de pago no encontrado.")
     except Factura.DoesNotExist:
-        raise ValueError("Factura no encontrada o ya procesada.")
+        raise ValueError("Factura no encontrada, ya procesada, o en un estado inválido.")
 
     # Lógica "Pagar luego"
     if metodo.tipo_metodo == "Pagar luego" or estado_override == "pendiente":

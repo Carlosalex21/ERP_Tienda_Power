@@ -15,7 +15,10 @@ router.register(r'atributos', views_taxonomia.AtributoViewSet)
 router.register(r'movimientos', views_operaciones.MovimientoInventarioViewSet)
 
 urlpatterns = [
-    path('', include(router.urls)),
     # Endpoint especializado para el POS
     path('actual/', views_stock.InventarioActualView.as_view(), name='inventario-actual'),
+    # Endpoint para la carga masiva de productos
+    path('productos/bulk-upload/', views_productos.ProductoBulkUploadView.as_view(), name='producto-bulk-upload'),
+    # Las URLs del router deben ir al final para que las rutas específicas se resuelvan primero.
+    path('', include(router.urls)),
 ]

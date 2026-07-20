@@ -1,5 +1,6 @@
 from django.contrib import admin
 from .models import Configuracioniva, Tipodocumentofiscal, ConfiguracionCorrelativo, ConfiguracionEmpresa
+from django_tenants.utils import get_public_schema_name
 
 @admin.register(Configuracioniva)
 class ConfiguracionivaAdmin(admin.ModelAdmin):
@@ -26,5 +27,8 @@ class ConfiguracionEmpresaAdmin(admin.ModelAdmin):
     list_display = ('nombre_comercial', 'razon_social', 'rif', 'telefono')
 
     def has_add_permission(self, request):
-        # Evita que se creen múltiples configuraciones desde el admin.
+        # Si estamos en el esquema público, no se puede agregar desde el admin principal.
+        if request.tenant.schema_name == get_public_schema_name():
+            return False
+        # Dentro de un tenant, solo permite agregar si no existe ya una configuración.
         return not ConfiguracionEmpresa.objects.exists()

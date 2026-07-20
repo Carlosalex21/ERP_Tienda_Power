@@ -6,8 +6,9 @@ from django.conf.urls.static import static
 from drf_spectacular.views import (
     SpectacularAPIView, 
     SpectacularRedocView, 
-    SpectacularSwaggerView
+    SpectacularSwaggerView,
 )
+from apps.tenants.api.views_subscription import TenantProfileView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -31,6 +32,8 @@ urlpatterns = [
     path('api/v1/inventario/', include('apps.inventario.urls')),
     path('api/v1/rrhh/', include('apps.rrhh.urls')),
     path('api/v1/reportes/', include('apps.reportes.urls')),
+    # Endpoint para que el frontend obtenga el perfil del tenant actual
+    path('api/v1/tenants/profile/', TenantProfileView.as_view(), name='tenant-profile'),
     path('api/v1/configuracion/', include('apps.configuracion.urls')),
     path('api/v1/clientes/', include('apps.clientes.urls')),
     path('api/v1/proveedores/', include('apps.proveedores.urls')),

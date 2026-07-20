@@ -1,61 +1,58 @@
 from django.db import models
-from django_tenants.models import TenantMixin, DomainMixin
 from django.utils import timezone
+from django_tenants.models import TenantMixin, DomainMixin
+from django.conf import settings
 
 class Plan(models.Model):
-    nombre = models.CharField(max_length=50, unique=True)
-    descripcion = models.TextField(blank=True, null=True)
+    """
+    Define los diferentes planes de suscripción que un cliente puede contratar.
+    """
+    nombre = models.CharField(max_length=100, unique=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2)
-    stripe_price_id = models.CharField(max_length=100, blank=True, null=True)
-    limite_usuarios = models.IntegerField(default=1)
-    limite_sucursales = models.IntegerField(default=1)
+    limite_usuarios = models.PositiveIntegerField(default=1)
+    limite_sucursales = models.PositiveIntegerField(default=1)
+    descripcion = models.TextField(blank=True, default='')
     activo = models.BooleanField(default=True)
 
     def __str__(self):
-        return f"{self.nombre} - ${self.precio}"
-
-class Subscription(models.Model):
-    ESTADOS_CHOICES = (
-        ('activa', 'Activa'),
-        ('expirada', 'Expirada'),
-        ('cancelada', 'Cancelada'),
-        ('pendiente', 'Pendiente de Pago'),
-    )
-    cliente = models.OneToOneField('Client', on_delete=models.CASCADE, related_name='subscription')
-    plan = models.ForeignKey(Plan, on_delete=models.RESTRICT)
-    estado = models.CharField(max_length=20, choices=ESTADOS_CHOICES, default='pendiente')
-    fecha_inicio = models.DateTimeField(default=timezone.now)
-    fecha_fin = models.DateTimeField(blank=True, null=True)
-    stripe_subscription_id = models.CharField(max_length=100, blank=True, null=True)
-
-    def is_active(self):
-        if self.estado == 'activa' and (not self.fecha_fin or self.fecha_fin > timezone.now()):
-            return True
-        return False
-
-    def __str__(self):
-        return f"Suscripción de {self.cliente.nombre_empresa} - {self.plan.nombre}"
+        return self.nombre
 
 class Client(TenantMixin):
+    """
+    Modelo principal que representa a un inquilino (tenant) en el sistema.
+    Cada 'Client' tiene su propio esquema de base de datos aislado.
+    """
+    TIPO_NEGOCIO_CHOICES = (
+        ('retail', 'Retail (Venta al Detal)'),
+        ('b2b', 'B2B (Mayorista/Fabricante)'),
+    )
+    owner = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE)
     nombre_empresa = models.CharField(max_length=100)
     email_contacto = models.EmailField()
-    fecha_creacion = models.DateField(auto_now_add=True)
-
-    # El plan antiguo se reemplaza por el modelo Subscription relacionado,
-    # pero mantenemos esta_activo que usaremos como flag secundario o general.
     esta_activo = models.BooleanField(default=True)
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    # --- NUEVOS CAMPOS ---
+    tipo_negocio = models.CharField(max_length=10, choices=TIPO_NEGOCIO_CHOICES, default='retail', help_text="Modelo de negocio principal del inquilino.")
+    onboarding_completado = models.BooleanField(default=False, help_text="Indica si el inquilino ha completado el asistente de configuración inicial.")
 
     auto_create_schema = True
-    auto_drop_schema = True 
+    auto_drop_schema = True
 
     def __str__(self):
         return self.nombre_empresa
 
-    @property
-    def has_active_subscription(self):
-        if hasattr(self, 'subscription'):
-            return self.subscription.is_active()
-        return False
-
 class Domain(DomainMixin):
     pass
+
+class Subscription(models.Model):
+    client = models.OneToOneField(Client, on_delete=models.CASCADE, null=True, blank=True)
+    plan = models.ForeignKey(Plan, on_delete=models.CASCADE)
+    fecha_inicio = models.DateField(auto_now_add=True)
+    fecha_fin = models.DateField(blank=True, null=True)
+    estado = models.CharField(max_length=20, default='active') # active, expired, cancelled
+
+    @property
+    def is_active(self):
+        """Propiedad que determina si la suscripción está actualmente activa."""
+        return self.estado == 'active' and self.fecha_fin >= timezone.now().date()

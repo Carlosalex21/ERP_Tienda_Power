@@ -18,3 +18,5 @@ xhtml2pdf==0.2.17
 celery==5.3.6
 redis==5.0.4
 drf-spectacular==0.28.0
+psutil==5.9.8
+pandas>=2.0.0

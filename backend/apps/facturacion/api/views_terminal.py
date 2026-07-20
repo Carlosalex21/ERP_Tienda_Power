@@ -41,16 +41,16 @@ class PagoView(APIView):
 
     def post(self, request):
         factura_id = request.data.get("factura_id")
-        metodo_id = request.data.get("metodo_pago")
+        metodo_pago_id = request.data.get("metodo_pago") # Clave consistente con el ModelSerializer
         monto = request.data.get("monto_recibido")
         
-        if not factura_id or not metodo_id:
-            return Response({"error": "Factura y método de pago requeridos."}, status=status.HTTP_400_BAD_REQUEST)
+        if not factura_id or not metodo_pago_id:
+            return Response({"error": "Los campos 'factura_id' y 'metodo_pago' son requeridos."}, status=status.HTTP_400_BAD_REQUEST)
 
         try:
             factura, transaccion = procesar_pago_factura_service(
                 factura_id=factura_id,
-                metodo_pago_id=metodo_id,
+                metodo_pago_id=metodo_pago_id,
                 monto_recibido=monto,
                 estado_override=request.data.get("estado", "").lower(),
                 datos_adicionales=request.data.get("datos_adicionales", {})
