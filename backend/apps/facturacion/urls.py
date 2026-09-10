@@ -8,6 +8,12 @@ from .api.views_finanzas import MetodoPagoViewSet, TransaccionpagoViewSet, Devol
 from .api.views_public_catalog import PublicCatalogView
 from .api.views_external_order import CreateExternalOrderCUD
 from .api.views_facturas import AnularFacturaView
+from .api.views_seniat import (
+    LibroCompraVentaViewSet,
+    NotaCreditoViewSet,
+    NotaDebitoViewSet,
+    RetencionViewSet,
+)
 
 router = DefaultRouter()
 router.register(r'lista', FacturaViewSet, basename='factura')
@@ -15,6 +21,11 @@ router.register(r'metodos-pago', MetodoPagoViewSet, basename='metodo-pago')
 router.register(r'transacciones', TransaccionpagoViewSet, basename='transaccion')
 router.register(r'cupones', CupondescuentoViewSet, basename='cupon')
 router.register(r'devoluciones', DevolucionViewSet, basename='devolucion')
+router.register(r'notas-credito', NotaCreditoViewSet, basename='nota-credito')
+router.register(r'notas-debito', NotaDebitoViewSet, basename='nota-debito')
+router.register(r'libro-compra-venta', LibroCompraVentaViewSet, basename='libro-compra-venta')
+router.register(r'retenciones', RetencionViewSet, basename='retencion')
+
 
 urlpatterns = [
     # Router viewsets (Facturas, MetodosPago, Transacciones, etc)

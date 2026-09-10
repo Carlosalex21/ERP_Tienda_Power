@@ -2,8 +2,10 @@ from django.contrib import admin
 from .models import (
     MetodoPago, Factura, Facturaelectronica, Cupondescuento,
     Detallefactura, Orden, Devolucion, Direccionenvio,
-    Envio, Transaccionpago, Promocion
+    Envio, Transaccionpago, Promocion,
+    NotaCredito, NotaDebito, LibroCompraVenta, Retencion,
 )
+
 
 @admin.register(MetodoPago)
 class MetodoPagoAdmin(admin.ModelAdmin):

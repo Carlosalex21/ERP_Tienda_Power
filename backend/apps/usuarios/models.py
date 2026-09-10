@@ -100,6 +100,13 @@ class UserMetadata(models.Model):
     )
     fecha_creacion = models.DateTimeField(auto_now_add=True, verbose_name="Fecha de Creación")
     fecha_modificacion = models.DateTimeField(auto_now=True, verbose_name="Última Modificación")
+    # --- Seguridad: bloqueo temporal por intentos fallidos de login ---
+    bloqueado_hasta = models.DateTimeField(
+        null=True,
+        blank=True,
+        verbose_name="Bloqueado hasta",
+        help_text="Fecha/hora hasta la que la cuenta queda bloqueada por intentos fallidos.",
+    )
 
     class Meta:
         db_table = 'UserMetadata'
@@ -109,3 +116,38 @@ class UserMetadata(models.Model):
     def __str__(self):
         full_name = self.user.get_full_name()
         return f"{full_name} ({self.user.username})" if full_name else self.user.username
+
+
+class LoginAttempt(models.Model):
+    """
+    Registro de intentos de inicio de sesión (Zero Trust).
+
+    Se usa para contar los intentos fallidos dentro de una ventana de tiempo
+    y bloquear temporalmente la cuenta del usuario, evitando fuerza bruta.
+    """
+    user = models.ForeignKey(
+        User,
+        on_delete=models.CASCADE,
+        related_name="login_attempts",
+        verbose_name="Usuario",
+    )
+    ip = models.GenericIPAddressField(
+        null=True,
+        blank=True,
+        verbose_name="Dirección IP",
+    )
+    success = models.BooleanField(default=False, verbose_name="¿Éxito?")
+    timestamp = models.DateTimeField(auto_now_add=True, verbose_name="Fecha y Hora")
+
+    class Meta:
+        db_table = 'LoginAttempt'
+        verbose_name = "Intento de Inicio de Sesión"
+        verbose_name_plural = "Intentos de Inicio de Sesión"
+        ordering = ['-timestamp']
+        indexes = [
+            models.Index(fields=['user', 'timestamp'], name='idx_login_user_ts'),
+        ]
+
+    def __str__(self) -> str:
+        estado = "éxito" if self.success else "fallo"
+        return f"{self.user.username}: {estado} desde {self.ip or 'desconocida'} ({self.timestamp})"

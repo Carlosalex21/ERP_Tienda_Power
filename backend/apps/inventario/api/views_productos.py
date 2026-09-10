@@ -13,7 +13,9 @@ class ProductoViewSet(viewsets.ModelViewSet):
     ViewSet para la gestión completa de Productos.
     Permite crear, leer, actualizar y eliminar productos.
     """
-    queryset = Producto.objects.prefetch_related('variantes').filter(activo=True)
+    # La relación inversa real de Variacionproducto es 'variacionproducto_set'
+    # (FK producto). Usamos ese nombre para el prefetch y evitar el error 500.
+    queryset = Producto.objects.prefetch_related('variacionproducto_set').filter(activo=True)
     serializer_class = ProductoSerializer
     permission_classes = [permissions.IsAuthenticated]
 

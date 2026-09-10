@@ -1,6 +1,14 @@
 from django.contrib import admin
-from .models import Configuracioniva, Tipodocumentofiscal, ConfiguracionCorrelativo, ConfiguracionEmpresa
+from .models import (
+    Configuracioniva,
+    Tipodocumentofiscal,
+    ConfiguracionCorrelativo,
+    ConfiguracionEmpresa,
+    Moneda,
+    TasaCambio,
+)
 from django_tenants.utils import get_public_schema_name
+
 
 @admin.register(Configuracioniva)
 class ConfiguracionivaAdmin(admin.ModelAdmin):
@@ -32,3 +40,25 @@ class ConfiguracionEmpresaAdmin(admin.ModelAdmin):
             return False
         # Dentro de un tenant, solo permite agregar si no existe ya una configuración.
         return not ConfiguracionEmpresa.objects.exists()
+@admin.register(Moneda)
+class MonedaAdmin(admin.ModelAdmin):
+    """Admin de monedas (ISO 4217) del tenant."""
+
+    list_display = ("codigo", "nombre", "simbolo", "es_predeterminada", "activa")
+    list_filter = ("activa", "es_predeterminada")
+    search_fields = ("codigo", "nombre")
+
+    def has_add_permission(self, request):
+        if request.tenant.schema_name == get_public_schema_name():
+            return False
+        return True
+
+
+@admin.register(TasaCambio)
+class TasaCambioAdmin(admin.ModelAdmin):
+    """Admin del historial de tasas de cambio."""
+
+    list_display = ("moneda", "fecha", "tasa", "fuente", "activa")
+    list_filter = ("activa", "moneda")
+    search_fields = ("moneda__codigo", "moneda__nombre", "fuente")
+    autocomplete_fields = ("moneda",)

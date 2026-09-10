@@ -51,7 +51,10 @@ class VariacionproductoSerializer(serializers.ModelSerializer):
         return obj.precio
 
 class ProductoSerializer(serializers.ModelSerializer):
-    variantes = VariacionproductoSerializer(many=True, read_only=True)
+    # El modelo Producto no tiene una relación 'variantes'; la relación real es
+    # la FK inversa de Variacionproducto (variacionproducto_set). Usamos source
+    # para exponerla como 'variantes' sin cambiar el contrato de la API.
+    variantes = VariacionproductoSerializer(many=True, read_only=True, source='variacionproducto_set')
     class Meta:
         model = Producto
         fields = '__all__'

@@ -1,12 +1,17 @@
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
-from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema
+
+from apps.core.permissions import IsAdminOrVendedor, IsTenantAdmin
+from apps.core.response import error_response, standard_response
 
 from ..models import Factura
 from .serializers import FacturaSerializer
-from apps.core.permissions import IsTenantAdmin, IsAdminOrVendedor
-from ..services.factura_service import anular_factura_y_restaurar_stock, FacturaAnulacionError
+from ..services.factura_service import (
+    FacturaAnulacionError,
+    anular_factura_y_restaurar_stock,
+)
+
 
 class FacturaViewSet(viewsets.ModelViewSet):
     """
@@ -14,28 +19,49 @@ class FacturaViewSet(viewsets.ModelViewSet):
     """
     queryset = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').prefetch_related('detalles__producto')
     serializer_class = FacturaSerializer
-    
+
     def get_permissions(self):
         """
         Asigna permisos basados en la acción.
+
+        - Lectura/escritura de facturas: Vendedores y Admins.
+        - Eliminación: Solo Admins del tenant.
         """
         if self.action in ['list', 'retrieve', 'create', 'update', 'partial_update']:
-            # Vendedores y Admins pueden ver, crear y editar facturas.
             self.permission_classes = [IsAdminOrVendedor]
         elif self.action == 'destroy':
-            # Solo Admins pueden borrar facturas.
             self.permission_classes = [IsTenantAdmin]
         return super().get_permissions()
 
+
 class AnularFacturaView(APIView):
+    """Anula una factura y restaura el stock, devolviendo la respuesta estándar."""
+
     permission_classes = [IsTenantAdmin]
 
-    @extend_schema(summary="Anular una Factura", responses={200: {"description": "Factura anulada y stock restaurado."}})
+    @extend_schema(
+        summary="Anular una Factura",
+        responses={
+            200: {"description": "Factura anulada y stock restaurado."},
+            404: {"description": "Factura no encontrada."},
+            400: {"description": "Error de anulación."},
+        },
+    )
     def post(self, request, pk):
+        """Procesa la anulación de la factura indicada."""
         try:
             anular_factura_y_restaurar_stock(factura_id=pk)
-            return Response({"message": "Factura anulada y stock restaurado exitosamente."})
+            return standard_response(
+                data={"message": "Factura anulada y stock restaurado exitosamente."},
+                status_code=status.HTTP_200_OK,
+            )
         except Factura.DoesNotExist:
-            return Response({"error": "Factura no encontrada."}, status=status.HTTP_404_NOT_FOUND)
+            return error_response(
+                [{"code": "not_found", "detail": "Factura no encontrada.", "field": None}],
+                status_code=status.HTTP_404_NOT_FOUND,
+            )
         except FacturaAnulacionError as e:
-            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+            return error_response(
+                [{"code": "anulacion_error", "detail": str(e), "field": None}],
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
