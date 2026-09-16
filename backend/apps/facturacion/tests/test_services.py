@@ -1,5 +1,5 @@
 from django.contrib.auth import get_user_model
-from django_tenants.test.cases import TenantTestCase
+from apps.core.testing import BaseTenantTestCase as TenantTestCase
 from django.test import override_settings
 from unittest.mock import patch
 from django.utils import timezone
@@ -19,29 +19,31 @@ class FacturacionServiceTests(TenantTestCase):
     def setUp(self):
         self.user = User.objects.create_user(username='testuser', email='test@example.com', password='password')
         self.cliente = Cliente.objects.create(nombre='Cliente Test', telefono='123456789')
-        self.producto = Producto.objects.create(nombre='Producto Test')
+        self.producto = Producto.objects.create(nombre='Producto Test', cantidad=10, precio=100, disponible_online=True, sku='PT001')
         self.variacion = Variacionproducto.objects.create(producto=self.producto, sku='PT001', cantidad=10, precio=100)
         ConfiguracionCorrelativo.objects.create(pk=1, prefijo='F-', current_number=0, number_length=3)
 
     def test_crear_orden_desde_pedido_publico(self, mock_woocommerce_sync):
+        # El catálogo público solo lista productos simples: el pedido resuelve
+        # contra `Producto`, no contra `Variacionproducto` (ver order_service).
         validated_data = {
             'cliente_nombre': 'Nuevo Cliente',
             'cliente_telefono': '987654321',
-            'items': [{'variacion_id': self.variacion.id, 'cantidad': 2}]
+            'items': [{'producto_id': self.producto.id, 'cantidad': 2}]
         }
         factura = crear_orden_desde_pedido_publico(validated_data, self.user)
         self.assertIsNotNone(factura)
         self.assertEqual(factura.estado, 'pendiente')
         self.assertEqual(factura.detalles.count(), 1)
-        self.variacion.refresh_from_db()
-        self.assertEqual(self.variacion.cantidad, 8) # Stock reducido
+        self.producto.refresh_from_db()
+        self.assertEqual(self.producto.cantidad, 8) # Stock reducido
         mock_woocommerce_sync.assert_called_once() # Verificamos que la tarea se intentó llamar
 
     def test_crear_orden_stock_insuficiente(self, mock_woocommerce_sync):
         validated_data = {
             'cliente_nombre': 'Nuevo Cliente',
             'cliente_telefono': '987654321',
-            'items': [{'variacion_id': self.variacion.id, 'cantidad': 15}] # Más de lo que hay
+            'items': [{'producto_id': self.producto.id, 'cantidad': 15}] # Más de lo que hay
         }
         with self.assertRaises(OrderCreationError):
             crear_orden_desde_pedido_publico(validated_data, self.user)

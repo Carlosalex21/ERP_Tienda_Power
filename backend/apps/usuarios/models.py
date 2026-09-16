@@ -4,6 +4,14 @@ from django.utils import timezone
 from apps.rrhh.models import Sucursal # Importamos el modelo Sucursal
 
 class Rol(models.Model):
+    # Código estable para autorización (ver apps.core.permissions). A
+    # diferencia de `nombre` -- editable libremente desde el panel -- el
+    # `codigo` es el identificador que el código de permisos compara, así
+    # renombrar el rol visible no rompe la autorización en silencio.
+    codigo = models.CharField(
+        max_length=30, unique=True, null=True, blank=True,
+        verbose_name="Código", help_text="Identificador estable usado por el sistema de permisos (ej: 'admin', 'vendedor').",
+    )
     nombre = models.CharField(unique=True, max_length=50, verbose_name="Nombre del Rol")
     descripcion = models.TextField(blank=True, null=True, verbose_name="Descripción")
     activo = models.BooleanField(default=True, verbose_name="Activo")

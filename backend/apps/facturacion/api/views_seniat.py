@@ -42,7 +42,7 @@ from apps.facturacion.services.retencion_service import (
 class NotaCreditoViewSet(viewsets.ModelViewSet):
     """Gestiona las notas de crédito (SENIAT)."""
 
-    queryset = NotaCredito.objects.select_related("factura").all()
+    queryset = NotaCredito.objects.select_related("factura").filter(activo=True)
     serializer_class = NotaCreditoSerializer
 
     def get_permissions(self):
@@ -51,6 +51,13 @@ class NotaCreditoViewSet(viewsets.ModelViewSet):
         else:
             self.permission_classes = [IsAdminOrVendedor]
         return super().get_permissions()
+
+    def perform_destroy(self, instance):
+        # Baja lógica, nunca borrado físico: es un documento fiscal emitido
+        # (tiene numero_nota/numero_control asignados desde que se crea) --
+        # desaparecerlo de verdad rompería la trazabilidad ante el SENIAT.
+        instance.activo = False
+        instance.save(update_fields=["activo"])
 
     def perform_create(self, serializer):
         """
@@ -94,7 +101,7 @@ class NotaCreditoViewSet(viewsets.ModelViewSet):
 class NotaDebitoViewSet(viewsets.ModelViewSet):
     """Gestiona las notas de débito (SENIAT)."""
 
-    queryset = NotaDebito.objects.select_related("factura").all()
+    queryset = NotaDebito.objects.select_related("factura").filter(activo=True)
     serializer_class = NotaDebitoSerializer
 
     def get_permissions(self):
@@ -103,6 +110,11 @@ class NotaDebitoViewSet(viewsets.ModelViewSet):
         else:
             self.permission_classes = [IsAdminOrVendedor]
         return super().get_permissions()
+
+    def perform_destroy(self, instance):
+        # Baja lógica -- ver el mismo comentario en NotaCreditoViewSet.
+        instance.activo = False
+        instance.save(update_fields=["activo"])
 
     def perform_create(self, serializer):
         """Crea la nota de débito usando la lógica del servicio."""
@@ -140,7 +152,7 @@ class NotaDebitoViewSet(viewsets.ModelViewSet):
 class LibroCompraVentaViewSet(viewsets.ModelViewSet):
     """Gestiona el libro de compras y ventas (SENIAT)."""
 
-    queryset = LibroCompraVenta.objects.select_related("factura").all()
+    queryset = LibroCompraVenta.objects.filter(activo=True)
     serializer_class = LibroCompraVentaSerializer
     filterset_fields = ("tipo_libro", "fecha_operacion")
 
@@ -207,7 +219,7 @@ class LibroCompraVentaViewSet(viewsets.ModelViewSet):
 class RetencionViewSet(viewsets.ModelViewSet):
     """Gestiona los comprobantes de retención (SENIAT)."""
 
-    queryset = Retencion.objects.select_related("factura", "proveedor").all()
+    queryset = Retencion.objects.select_related("factura", "proveedor").filter(activo=True)
     serializer_class = RetencionSerializer
 
     def get_permissions(self):
@@ -216,6 +228,11 @@ class RetencionViewSet(viewsets.ModelViewSet):
         else:
             self.permission_classes = [IsTenantAdmin]
         return super().get_permissions()
+
+    def perform_destroy(self, instance):
+        # Baja lógica -- ver el mismo comentario en NotaCreditoViewSet.
+        instance.activo = False
+        instance.save(update_fields=["activo"])
 
     def perform_create(self, serializer):
         """
@@ -232,6 +249,7 @@ class RetencionViewSet(viewsets.ModelViewSet):
             tipo_retencion=data["tipo_retencion"],
             porcentaje=data["porcentaje"],
             base=data["base"],
+            periodo_imposicion=data.get("periodo_imposicion"),
         )
         serializer.instance = comprobante
 

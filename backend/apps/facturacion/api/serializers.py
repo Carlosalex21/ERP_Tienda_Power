@@ -25,11 +25,12 @@ from apps.facturacion.models import (
     Transaccionpago,
 )
 from apps.facturacion.services.calculos_service import recalcular_y_guardar_factura
-from apps.facturacion.services.libros_service import registrar_factura_en_libro
 
 
 class MetodoPagoSerializer(serializers.ModelSerializer):
     """Serializer de método de pago."""
+
+    banco_nombre = serializers.CharField(source="banco.nombre", read_only=True, default=None)
 
     class Meta:
         model = MetodoPago
@@ -84,12 +85,16 @@ class FacturaSerializer(serializers.ModelSerializer):
     )
     moneda_codigo = serializers.CharField(source="moneda.codigo", read_only=True, default=None)
     moneda_nombre = serializers.CharField(source="moneda.nombre", read_only=True, default=None)
+    vendedor_nombre = serializers.SerializerMethodField()
 
     class Meta:
         model = Factura
         fields = (
             "id",
             "usuario",
+            "vendedor",
+            "vendedor_nombre",
+            "condicion_pago",
             "cliente",
             "orden",
             "fecha_operacion",
@@ -120,6 +125,12 @@ class FacturaSerializer(serializers.ModelSerializer):
             "detalles",
             "detalles_para_crear",
         )
+
+    def get_vendedor_nombre(self, obj):
+        persona = obj.vendedor or obj.usuario
+        if not persona:
+            return None
+        return persona.get_full_name() or persona.username
         read_only_fields = (
             "subtotal",
             "base_imponible",
@@ -141,8 +152,12 @@ class FacturaSerializer(serializers.ModelSerializer):
         for detalle_data in detalles_data:
             Detallefactura.objects.create(factura=factura, **detalle_data)
         recalcular_y_guardar_factura(factura)
-        # Registro automático en el Libro de Venta (SENIAT).
-        registrar_factura_en_libro(factura)
+        # El registro en el Libro de Ventas ya NO se dispara aquí -- se
+        # mueve a `Factura.save()` (ver ese método), porque en este punto
+        # (creación desde el panel/POS) la factura normalmente todavía está
+        # en estado 'borrador', sin correlativo asignado. Registrarla aquí
+        # metía en el Libro Fiscal ventas que ni siquiera se habían pagado
+        # todavía, con un número de documento vacío.
         return factura
 
     def update(self, instance, validated_data):
@@ -153,17 +168,15 @@ class FacturaSerializer(serializers.ModelSerializer):
             for detalle_data in detalles_data:
                 Detallefactura.objects.create(factura=instance, **detalle_data)
             recalcular_y_guardar_factura(instance)
-            # Actualizar el registro en el Libro de Venta (SENIAT).
-            from apps.facturacion.models import LibroCompraVenta
-            LibroCompraVenta.objects.filter(
-                tipo_documento="Factura", numero_documento=instance.correlativo or ""
-            ).delete()
-            registrar_factura_en_libro(instance)
+            # Idem: `Factura.save()` (llamado dentro de `recalcular_y_guardar_factura`)
+            # ya deja la línea del Libro al día si la factura tiene correlativo.
         return instance
 
 
 class TransaccionpagoSerializer(serializers.ModelSerializer):
     """Serializer de transacción de pago."""
+
+    metodo_pago_nombre = serializers.CharField(source="metodo_pago.nombre", read_only=True, default=None)
 
     class Meta:
         model = Transaccionpago
@@ -218,12 +231,19 @@ class NotaCreditoSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, write_only=True,
         help_text="Monto a acreditar sobre la factura (no puede exceder el total).",
     )
+    # base_imponible/iva_total/retencion_total/total se calculan proporcionales
+    # a los campos EN MONEDA PROPIA de la factura (no a los `_base`), así que
+    # están en la misma moneda en que se emitió esa factura -- este campo le
+    # dice al frontend cuál es, para que nunca la etiquete con la moneda
+    # equivocada (el mismo bug que hubo en Pedidos y en el Libro de Ventas).
+    factura_moneda_codigo = serializers.CharField(source="factura.moneda_codigo", read_only=True, default=None)
 
     class Meta:
         model = NotaCredito
         fields = (
             "id",
             "factura",
+            "factura_moneda_codigo",
             "numero_nota",
             "numero_control",
             "fecha_emision",
@@ -233,6 +253,10 @@ class NotaCreditoSerializer(serializers.ModelSerializer):
             "iva_total",
             "retencion_total",
             "total",
+            "base_imponible_base",
+            "iva_base",
+            "retencion_base",
+            "total_base",
             "activo",
         )
         read_only_fields = (
@@ -243,6 +267,10 @@ class NotaCreditoSerializer(serializers.ModelSerializer):
             "iva_total",
             "retencion_total",
             "total",
+            "base_imponible_base",
+            "iva_base",
+            "retencion_base",
+            "total_base",
         )
 
 
@@ -259,12 +287,15 @@ class NotaDebitoSerializer(serializers.ModelSerializer):
         max_digits=10, decimal_places=2, write_only=True,
         help_text="Monto a debitar sobre la factura (recargo, interés, diferencia).",
     )
+    # Ver el mismo comentario en NotaCreditoSerializer.
+    factura_moneda_codigo = serializers.CharField(source="factura.moneda_codigo", read_only=True, default=None)
 
     class Meta:
         model = NotaDebito
         fields = (
             "id",
             "factura",
+            "factura_moneda_codigo",
             "numero_nota",
             "numero_control",
             "fecha_emision",
@@ -273,6 +304,9 @@ class NotaDebitoSerializer(serializers.ModelSerializer):
             "base_imponible",
             "iva_total",
             "total",
+            "base_imponible_base",
+            "iva_base",
+            "total_base",
             "activo",
         )
         read_only_fields = (
@@ -282,6 +316,9 @@ class NotaDebitoSerializer(serializers.ModelSerializer):
             "base_imponible",
             "iva_total",
             "total",
+            "base_imponible_base",
+            "iva_base",
+            "total_base",
         )
 
 
@@ -301,6 +338,13 @@ class RetencionSerializer(serializers.ModelSerializer):
     ``porcentaje`` y ``base``. El ``monto`` lo calcula
     ``crear_comprobante_retencion`` a partir de base y porcentaje.
     """
+
+    # `base` es un monto que el usuario tipea a mano al crear el
+    # comprobante (no se deriva de la factura), así que puede estar en
+    # cualquier moneda -- normalmente la de la factura asociada, cuando hay
+    # una. Se expone para que el frontend pueda etiquetarlo honestamente en
+    # vez de asumir una moneda fija.
+    factura_moneda_codigo = serializers.CharField(source="factura.moneda_codigo", read_only=True, default=None)
 
     class Meta:
         model = Retencion

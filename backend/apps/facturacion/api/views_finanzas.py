@@ -17,9 +17,10 @@ class MetodoPagoViewSet(viewsets.ModelViewSet):
         instance.save()
 
 class TransaccionpagoViewSet(viewsets.ModelViewSet):
-    queryset = Transaccionpago.objects.filter(activo=True).order_by("-fecha")
+    queryset = Transaccionpago.objects.select_related('metodo_pago', 'factura').filter(activo=True).order_by("-fecha")
     serializer_class = TransaccionpagoSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ['factura', 'estado']
 
 class TransaccionpagoByMetodo(APIView):
     permission_classes = [permissions.IsAuthenticated]

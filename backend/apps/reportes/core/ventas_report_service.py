@@ -1,11 +1,19 @@
 from datetime import datetime, time
+from decimal import Decimal
 from django.utils import timezone
 from apps.facturacion.models import Factura
 
 def obtener_cierre_caja_service(date_str=None):
     """
-    Calcula el total ingresado en caja y devuelve las transacciones
-    para un día específico.
+    Calcula el total ingresado en caja (desglosado POR MONEDA) y devuelve
+    las transacciones para un día específico.
+
+    El cierre de caja es un conteo físico -- el cajero necesita saber
+    "debo tener $50 en dólares Y Bs 200.000 en bolívares en la gaveta", no
+    un solo número mezclando ambas monedas como si fueran la misma unidad
+    (a diferencia del Libro Fiscal, aquí NO se convierte a la moneda base:
+    ver `registrar_factura_en_libro`, que sí convierte porque ese reporte
+    es uno solo por definición ante el SENIAT).
     """
     # 1. Definir la fecha objetivo
     if date_str:
@@ -21,10 +29,19 @@ def obtener_cierre_caja_service(date_str=None):
     facturas = Factura.objects.filter(
         fecha_operacion__range=(start_of_day, end_of_day),
         estado__iexact='pagado'
-    ).select_related('cliente', 'usuario', 'metodo_pago').order_by('fecha_operacion')
+    ).select_related('cliente', 'usuario', 'metodo_pago', 'moneda').order_by('fecha_operacion')
 
-    # 4. Calcular el total
-    total_caja = sum(f.total for f in facturas)
+    # 4. Calcular el total POR MONEDA (nunca sumar montos de monedas distintas).
+    totales_por_moneda: dict[str, dict] = {}
+    for f in facturas:
+        codigo = f.moneda.codigo if f.moneda else '—'
+        simbolo = f.moneda.simbolo if f.moneda else ''
+        entrada = totales_por_moneda.setdefault(codigo, {
+            'moneda_codigo': codigo, 'moneda_simbolo': simbolo, 'total': Decimal('0.00'),
+        })
+        entrada['total'] += (f.total or Decimal('0.00'))
+
+    total_caja = list(totales_por_moneda.values())
 
     return target_date, total_caja, facturas
 

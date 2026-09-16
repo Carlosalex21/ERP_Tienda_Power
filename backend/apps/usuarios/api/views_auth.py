@@ -3,11 +3,12 @@ from __future__ import annotations
 from rest_framework import status
 from rest_framework.permissions import AllowAny, BasePermission, IsAuthenticated
 from rest_framework.response import Response
-from rest_framework.throttling import ScopedRateThrottle
 from rest_framework.views import APIView
 from rest_framework_simplejwt.views import TokenObtainPairView
 
 from apps.core.response import error_response, standard_response
+from apps.core.permissions import ROL_ADMIN, codigo_rol
+from apps.core.throttling import ResilientScopedRateThrottle as ScopedRateThrottle
 from apps.usuarios.services.login_attempt_service import (
     limpiar_intentos,
     registrar_intento_fallido,
@@ -24,7 +25,7 @@ class IsAdmin(BasePermission):
         if not request.user or not request.user.is_authenticated:
             return False
         metadata = getattr(request.user, "metadata", None)
-        return bool(metadata and metadata.rol and metadata.rol.nombre == "Administrador")
+        return bool(metadata) and codigo_rol(metadata.rol) == ROL_ADMIN
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):

@@ -40,6 +40,6 @@ class EmpleadoViewSet(viewsets.ModelViewSet):
         user_data = {f: serializer.validated_data.pop(f, '') for f in user_fields if f in serializer.validated_data}
         
         metadata = crear_empleado_service(user_data, serializer.validated_data)
-        
+
         read_serializer = UserMetadataSerializer(metadata, context={'request': request})
         return Response(read_serializer.data, status=status.HTTP_201_CREATED)

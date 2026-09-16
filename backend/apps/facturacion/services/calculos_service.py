@@ -15,6 +15,7 @@ from decimal import Decimal, ROUND_HALF_UP
 
 from django.conf import settings
 
+from apps.configuracion.core.config_service import obtener_pais_tenant
 from apps.configuracion.core.tax_strategy import TaxStrategyRegistry
 from apps.configuracion.services.conversion_service import (
     MonedaNoEncontradaError,
@@ -38,10 +39,15 @@ def _resolve_strategy(country_code: str | None = None):
     """
     Resuelve la estrategia fiscal activa.
 
+    Orden de resolución: ``country_code`` explícito (permite forzar un país
+    puntual, ej. en tests) > país configurado del tenant
+    (``ConfiguracionEmpresa.pais_codigo``) > ``settings.DEFAULT_TAX_COUNTRY``
+    como último recurso.
+
     Args:
-        country_code: Código de país (VE/CO/PE). Si es None usa 'VE' (SENIAT).
+        country_code: Código de país (VE/CO/PE) para forzar la estrategia.
     """
-    code = (country_code or getattr(settings, "DEFAULT_TAX_COUNTRY", "VE")).upper()
+    code = (country_code or obtener_pais_tenant() or getattr(settings, "DEFAULT_TAX_COUNTRY", "VE")).upper()
     return TaxStrategyRegistry(code).get_strategy()
 
 
@@ -74,9 +80,22 @@ def calcular_linea(detalle: Detallefactura, strategy):
     if config_iva is not None:
         tasa_iva = Decimal(config_iva.porcentaje_iva or "0")
 
-    # Si la tasa es 0 => exento.
+    # Extraer la base imponible del total (que YA incluye IVA) antes de
+    # calcular el impuesto. Antes se le pasaba `total_linea_con_dto`
+    # directamente a `calculate_tax` como si ya fuera la base pre-impuesto
+    # -- cuya fórmula es `base * tasa/100` --, lo que sobreestima el IVA y
+    # subestima la base en cada línea (ej: $67 con 16% daba IVA=10.72 y
+    # base=56.28, en vez de los correctos IVA=9.24 y base=57.76). El total
+    # cobrado al cliente no cambiaba (subtotal+iva siempre suma el total
+    # ingresado), pero el desglose fiscal sí estaba mal -- el mismo cálculo
+    # que ya usa correctamente `Producto.base_imponible`.
+    if tasa_iva > 0:
+        base_extraida = total_linea_con_dto / (Decimal("1") + tasa_iva / Decimal("100"))
+    else:
+        base_extraida = total_linea_con_dto
+
     monto_iva = strategy.calculate_tax(
-        base=total_linea_con_dto,
+        base=base_extraida,
         tax_rate=tasa_iva,
         tax_type="iva",
         exempt=(tasa_iva == Decimal("0")),

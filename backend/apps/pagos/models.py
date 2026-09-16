@@ -1,6 +1,28 @@
 from django.db import models
 from apps.facturacion.models import Factura # Asumiendo que Factura está en apps.facturacion
 
+
+class Banco(models.Model):
+    """
+    Entidad bancaria (Banesco, Mercantil, Banco de Venezuela...). Un método
+    de pago no-efectivo (`facturacion.MetodoPago`) apunta a un banco fijo --
+    así, al cuadrar caja al final del día/turno, el reporte de "Cobros"
+    puede agrupar por banco y compararlo contra el estado de cuenta real de
+    esa cuenta (ver `CajaSesion` en apps.facturacion).
+    """
+    nombre = models.CharField(max_length=100, unique=True)
+    activo = models.BooleanField(default=True)
+
+    class Meta:
+        db_table = 'Banco'
+        verbose_name = "Banco"
+        verbose_name_plural = "Bancos"
+        ordering = ['nombre']
+
+    def __str__(self) -> str:
+        return self.nombre
+
+
 class MetodoPagoConfig(models.Model):
     """
     Configuración general de un método de pago para el tenant.
@@ -42,6 +64,32 @@ class ZelleConfig(models.Model):
         verbose_name = "Configuración Zelle"
         verbose_name_plural = "Configuraciones Zelle"
 
+class StripeConfig(models.Model):
+    """
+    Configuración de Stripe del tenant, para cobrar en moneda extranjera
+    (tarjetas internacionales) desde el catálogo público.
+
+    Cada tenant conecta su PROPIA cuenta de Stripe (no hay Stripe Connect
+    aquí -- eso implicaría OAuth y verificación KYC por tenant, mucho más
+    trabajo del que un negocio pequeño necesita para empezar a cobrar).
+    `secret_key` nunca se expone en un serializer de lectura: solo se usa
+    server-side para crear la Checkout Session.
+    """
+    metodo_pago = models.OneToOneField(MetodoPagoConfig, on_delete=models.CASCADE, related_name='stripe_config', verbose_name="Método de Pago Asociado")
+    publishable_key = models.CharField(max_length=255, verbose_name="Publishable Key", help_text="Empieza con pk_test_ o pk_live_.")
+    secret_key = models.CharField(max_length=255, verbose_name="Secret Key", help_text="Empieza con sk_test_ o sk_live_. Nunca se muestra de vuelta una vez guardada.")
+    webhook_secret = models.CharField(max_length=255, blank=True, null=True, verbose_name="Webhook Signing Secret", help_text="whsec_... -- para que Stripe confirme pagos automáticamente.")
+    moneda = models.CharField(max_length=3, default='usd', verbose_name="Moneda", help_text="Código ISO 4217 en minúsculas (usd, eur, etc).")
+
+    class Meta:
+        verbose_name = "Configuración de Stripe"
+        verbose_name_plural = "Configuraciones de Stripe"
+
+    @property
+    def modo_test(self) -> bool:
+        return self.secret_key.startswith('sk_test_')
+
+
 class TransaccionPasarela(models.Model):
     """
     Registro de transacciones con pasarelas de pago externas.
@@ -57,3 +105,6 @@ class TransaccionPasarela(models.Model):
     class Meta:
         verbose_name = "Transacción de Pasarela"
         verbose_name_plural = "Transacciones de Pasarela"
+
+    def __str__(self) -> str:
+        return f"Transacción {self.referencia_externa or f'#{self.pk}'} ({self.estado}) - Factura #{self.factura_id or 's/factura'}"

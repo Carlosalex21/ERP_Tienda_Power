@@ -27,23 +27,54 @@ class ConfiguracionCorrelativo(models.Model):
     current_number = models.IntegerField(default=0, verbose_name="Número Actual", help_text="El último número de factura utilizado.")
     number_length = models.IntegerField(default=3, verbose_name="Longitud del Número", help_text="Número de dígitos para el correlativo (ej: 3 para 001).")
     # --- Número de Control SENIAT ---
+    # El formato real que exige el SENIAT es "<código de sucursal/terminal de
+    # 2 dígitos>-<correlativo>" (ej: "00-00000001"), no un prefijo de texto
+    # libre como "CTRL-" (que no es un número de control válido ante el ente).
     prefijo_numero_control = models.CharField(
-        max_length=10, default="CTRL-", verbose_name="Prefijo Número de Control",
-        help_text="Prefijo para el número de control SENIAT (ej: CTRL-, NC-)."
+        max_length=10, default="00-", verbose_name="Prefijo Número de Control",
+        help_text="Prefijo para el número de control SENIAT (ej: 00- para la sucursal única/matriz)."
     )
     current_control_number = models.IntegerField(
         default=0, verbose_name="Número de Control Actual",
         help_text="El último número de control utilizado."
     )
     control_number_length = models.IntegerField(
-        default=5, verbose_name="Longitud del Número de Control",
-        help_text="Número de dígitos para el control (ej: 5 para 00001)."
+        default=8, verbose_name="Longitud del Número de Control",
+        help_text="Número de dígitos para el control (ej: 8 para 00000001)."
+    )
+
+    # --- Número de Control para Notas de Crédito/Débito ---
+    # Antes las notas usaban `current_control_number` -- el MISMO contador
+    # que las facturas -- así que cada nota emitida "robaba" un número de la
+    # secuencia de facturas. El SENIAT exige que cada tipo de documento
+    # (factura, nota de crédito, nota de débito) lleve su propia numeración
+    # de control correlativa e independiente.
+    prefijo_numero_control_nota_credito = models.CharField(
+        max_length=10, default="00-", verbose_name="Prefijo Número de Control (Nota de Crédito)",
+    )
+    current_control_number_nota_credito = models.IntegerField(
+        default=0, verbose_name="Número de Control Actual (Nota de Crédito)",
+    )
+    control_number_length_nota_credito = models.IntegerField(
+        default=8, verbose_name="Longitud del Número de Control (Nota de Crédito)",
+    )
+    prefijo_numero_control_nota_debito = models.CharField(
+        max_length=10, default="00-", verbose_name="Prefijo Número de Control (Nota de Débito)",
+    )
+    current_control_number_nota_debito = models.IntegerField(
+        default=0, verbose_name="Número de Control Actual (Nota de Débito)",
+    )
+    control_number_length_nota_debito = models.IntegerField(
+        default=8, verbose_name="Longitud del Número de Control (Nota de Débito)",
     )
 
     class Meta:
         db_table = 'ConfiguracionCorrelativo'
         verbose_name = "Configuración de Correlativo"
         verbose_name_plural = "Configuraciones de Correlativos"
+
+    def __str__(self) -> str:
+        return f"Numeración de facturas ({self.prefijo}{str(self.current_number).zfill(self.number_length)} emitido hasta ahora)"
 
 
 
@@ -52,12 +83,21 @@ class ConfiguracionEmpresa(models.Model):
     Almacena la configuración específica de la empresa para cada tenant.
     Se asume que solo habrá una instancia de este modelo por tenant (con pk=1).
     """
+    PAIS_CHOICES = (
+        ('VE', 'Venezuela'),
+        ('CO', 'Colombia'),
+        ('PE', 'Perú'),
+    )
     nombre_comercial = models.CharField(max_length=255, default="Mi Empresa", verbose_name="Nombre Comercial")
     razon_social = models.CharField(max_length=255, blank=True, null=True, verbose_name="Razón Social")
     rif = models.CharField(max_length=20, blank=True, null=True, verbose_name="RIF / ID Fiscal")
     telefono = models.CharField(max_length=50, blank=True, null=True, verbose_name="Teléfono de la Empresa", help_text="Número para recibir notificaciones de pedidos.")
     direccion = models.TextField(blank=True, null=True, verbose_name="Dirección Fiscal")
     logo = models.ImageField(upload_to='logos_empresas/', null=True, blank=True, verbose_name="Logo de la Empresa")
+    pais_codigo = models.CharField(
+        max_length=2, choices=PAIS_CHOICES, default='VE', verbose_name="País",
+        help_text="País fiscal del tenant. Determina qué TaxStrategy (apps.configuracion.core.tax_strategy) se aplica por defecto.",
+    )
 
     class Meta:
         verbose_name = "Configuración de la Empresa"

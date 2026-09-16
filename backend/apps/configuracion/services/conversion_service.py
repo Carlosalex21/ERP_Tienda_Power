@@ -87,6 +87,17 @@ def get_tasa_vigente(codigo_moneda: str) -> Decimal:
         TasaNoDisponibleError: Si la moneda no tiene una tasa vigente.
     """
     codigo = codigo_moneda.upper()
+
+    if codigo == "USD":
+        # Efecto colateral intencional: antes de resolver la tasa vigente de
+        # USD, garantiza que exista una tasa de HOY tomada del BCV para
+        # tenants venezolanos -- así el usuario nunca tiene que cargarla a
+        # mano (ver `bcv_service`). Import diferido para evitar un ciclo de
+        # imports (`bcv_service` importa `invalidar_tasas_cambio` de este
+        # mismo módulo).
+        from .bcv_service import asegurar_tasa_bcv_del_dia
+        asegurar_tasa_bcv_del_dia()
+
     moneda = Moneda.objects.filter(codigo=codigo, activa=True).first()
     if moneda is None:
         raise MonedaNoEncontradaError(f"La moneda '{codigo_moneda}' no existe.")
@@ -135,9 +146,16 @@ def convertir(
     tasa_origen = get_tasa_vigente(from_codigo)
     tasa_destino = get_tasa_vigente(to_codigo)
 
-    # Convierte a la moneda base y luego a la moneda destino.
-    en_base = monto / tasa_origen
-    convertido = en_base * tasa_destino
+    # `tasa` significa "1 unidad de esta moneda = tasa unidades de la
+    # moneda base" (ver `get_tasa_vigente`) -- para pasar A la base se
+    # MULTIPLICA por la tasa de origen, no se divide. Antes esta fórmula
+    # estaba invertida: dividía siempre, así que cualquier conversión entre
+    # dos monedas no-base daba un resultado absurdo (ej. $20 a 842 Bs/$
+    # calculaba Bs 0.02 en vez de Bs 16.840) -- solo "funcionaba" quien
+    # convertía desde/hacia la propia moneda base, porque ahí la tasa es
+    # 1 y dividir o multiplicar da lo mismo.
+    en_base = monto * tasa_origen
+    convertido = en_base / tasa_destino
     return _round_money(convertido)
 
 

@@ -1,5 +1,6 @@
 from rest_framework import viewsets, status
 from rest_framework.views import APIView
+from rest_framework.exceptions import ValidationError
 from drf_spectacular.utils import extend_schema
 
 from apps.core.permissions import IsAdminOrVendedor, IsTenantAdmin
@@ -17,8 +18,12 @@ class FacturaViewSet(viewsets.ModelViewSet):
     """
     ViewSet para la gestión completa de Facturas (Listar, Crear, Obtener, Actualizar, Eliminar).
     """
-    queryset = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').prefetch_related('detalles__producto')
+    queryset = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').prefetch_related('detalles__producto').order_by('-fecha_operacion')
     serializer_class = FacturaSerializer
+    # Permite `?estado=pendiente` -- usado por el panel de Pedidos para no
+    # traer/filtrar en el cliente todo el historial de facturas solo para
+    # contar cuántas vienen del catálogo público sin confirmar.
+    filterset_fields = ['estado']
 
     def get_permissions(self):
         """
@@ -32,6 +37,32 @@ class FacturaViewSet(viewsets.ModelViewSet):
         elif self.action == 'destroy':
             self.permission_classes = [IsTenantAdmin]
         return super().get_permissions()
+
+    def perform_create(self, serializer):
+        # El POS no mandaba `usuario` en el payload -- una venta quedaba sin
+        # registro de quién la hizo. Por defecto se asume quien está logueado;
+        # `vendedor` puede venir explícito si un admin está registrando una
+        # venta que en realidad cerró otro empleado (ej. vendedor en la calle).
+        extra = {}
+        if serializer.validated_data.get('usuario') is None:
+            extra['usuario'] = self.request.user
+        if serializer.validated_data.get('vendedor') is None:
+            extra['vendedor'] = serializer.validated_data.get('usuario') or self.request.user
+        serializer.save(**extra)
+
+    def perform_destroy(self, instance):
+        # `correlativo` solo se asigna cuando la factura pasa a
+        # pendiente/pagado (ver `Factura.save()`) -- si ya lo tiene, es un
+        # documento fiscal real y borrarlo (aunque sea "solo" de la base de
+        # datos) dejaría un hueco en la numeración que el SENIAT/DIAN/SUNAT
+        # exigen que sea correlativa y sin saltos. La única vía para un
+        # documento ya numerado es anularlo (`AnularFacturaView`), que deja
+        # el registro y el motivo, no lo borra.
+        if instance.correlativo:
+            raise ValidationError({
+                "detail": "Esta factura ya tiene un número fiscal asignado y no se puede eliminar. Anúlala en su lugar.",
+            })
+        instance.delete()
 
 
 class AnularFacturaView(APIView):

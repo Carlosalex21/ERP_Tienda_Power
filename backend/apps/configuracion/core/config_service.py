@@ -58,6 +58,34 @@ def obtener_y_actualizar_numero_control() -> str:
     return f"{config.prefijo_numero_control}{numero_formateado}"
 
 
+@transaction.atomic
+def obtener_y_actualizar_numero_control_nota_credito() -> str:
+    """
+    Número de control SENIAT para una Nota de Crédito -- secuencia propia,
+    independiente de la de facturas (ver comentario en
+    `ConfiguracionCorrelativo.prefijo_numero_control_nota_credito`).
+    """
+    config, _ = ConfiguracionCorrelativo.objects.select_for_update().get_or_create(pk=1)
+
+    config.current_control_number_nota_credito += 1
+    config.save(update_fields=["current_control_number_nota_credito"])
+
+    numero_formateado = str(config.current_control_number_nota_credito).zfill(config.control_number_length_nota_credito)
+    return f"{config.prefijo_numero_control_nota_credito}{numero_formateado}"
+
+
+@transaction.atomic
+def obtener_y_actualizar_numero_control_nota_debito() -> str:
+    """Número de control SENIAT para una Nota de Débito -- ver la función análoga de Nota de Crédito."""
+    config, _ = ConfiguracionCorrelativo.objects.select_for_update().get_or_create(pk=1)
+
+    config.current_control_number_nota_debito += 1
+    config.save(update_fields=["current_control_number_nota_debito"])
+
+    numero_formateado = str(config.current_control_number_nota_debito).zfill(config.control_number_length_nota_debito)
+    return f"{config.prefijo_numero_control_nota_debito}{numero_formateado}"
+
+
 @cached(ttl=settings.CACHE_TTL.get("configuraciones", 600), key_builder=lambda: ("configuraciones_globales",))
 def obtener_configuraciones() -> Dict[str, Any]:
     """
@@ -102,6 +130,24 @@ def obtener_configuraciones() -> Dict[str, Any]:
     }
 
 
+@cached(ttl=settings.CACHE_TTL.get("configuraciones", 600), key_builder=lambda: ("pais_tenant",))
+def obtener_pais_tenant() -> str:
+    """
+    Devuelve el código de país fiscal configurado para el tenant activo.
+
+    Lee ``ConfiguracionEmpresa.pais_codigo`` (sembrado por
+    ``TenantService.create_tenant`` al dar de alta el inquilino). Si por
+    algún motivo no existe la fila de configuración, cae a
+    ``settings.DEFAULT_TAX_COUNTRY`` en vez de asumir Venezuela en silencio.
+    """
+    from ..models import ConfiguracionEmpresa
+
+    empresa = ConfiguracionEmpresa.objects.filter(pk=1).values("pais_codigo").first()
+    if empresa and empresa.get("pais_codigo"):
+        return empresa["pais_codigo"]
+    return getattr(settings, "DEFAULT_TAX_COUNTRY", "VE")
+
+
 def invalidar_configuraciones() -> None:
     """Invalida las claves de caché relacionadas con la configuración global."""
     invalidate_pattern("configuraciones_globales")
@@ -109,6 +155,7 @@ def invalidar_configuraciones() -> None:
     invalidate_pattern("configuracion_iva")
     invalidate_pattern("monedas")
     invalidate_pattern("tasas_cambio")
+    invalidate_pattern("pais_tenant")
 
 
 def _build_tax_strategy_key(country: str) -> tuple:

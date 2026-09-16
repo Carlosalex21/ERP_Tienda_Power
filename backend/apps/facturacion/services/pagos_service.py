@@ -1,8 +1,19 @@
 import uuid
+from decimal import Decimal
+
 from django.db import transaction
+from django.db.models import Sum
 from django.utils import timezone
-from apps.facturacion.models import Factura, MetodoPago, Detallefactura, Transaccionpago
+
+from apps.facturacion.models import CajaSesion, Detallefactura, Factura, MetodoPago, Transaccionpago
 from apps.inventario.services.stock_service import reducir_stock_item
+
+CENT = Decimal("0.01")
+
+
+class PagoServiceError(Exception):
+    """Error controlado al registrar pagos (usado además de ValueError por compatibilidad con las vistas)."""
+
 
 def afectar_inventario_por_venta(factura):
     """
@@ -16,54 +27,164 @@ def afectar_inventario_por_venta(factura):
         reducir_stock_item(item_vendido, detalle.cantidad)
 
 
+def _round(value) -> Decimal:
+    return Decimal(str(value or 0)).quantize(CENT)
+
+
 @transaction.atomic
-def procesar_pago_factura_service(factura_id, metodo_pago_id, monto_recibido, estado_override, datos_adicionales):
+def procesar_pago_factura_service(factura_id, pagos, estado_override, datos_adicionales, usuario=None):
     """
-    Lógica core transaccional para registrar el pago de una factura.
-    Levanta excepciones (ValueError) si hay reglas de negocio rotas.
+    Registra uno o varios pagos sobre una factura.
+
+    A diferencia de la versión anterior (un único `metodo_pago_id` +
+    `monto_recibido`, siempre por el total completo de la factura), esto
+    soporta:
+
+    - **Pago dividido**: `pagos` puede traer varias entradas (ej. la mitad
+      en efectivo y la mitad por Pago Móvil) en una sola venta.
+    - **Abono a crédito**: si la suma de `pagos` no cubre el saldo
+      pendiente de la factura, esta queda en `estado='pendiente'` con el
+      saldo reducido -- se puede volver a llamar esta misma función más
+      tarde con el resto (otro abono), sin volver a descontar stock.
+    - **Vuelto**: si `monto_recibido` de una entrada es mayor que su
+      `monto` (típicamente efectivo), el excedente queda registrado en
+      `Transaccionpago.vuelto` en vez de perderse -- es el dinero que salió
+      físicamente de la caja y que antes no quedaba registrado en ningún
+      lado.
+
+    Args:
+        factura_id: ID de la factura.
+        pagos: lista de ``{"metodo_pago_id": int, "monto": Decimal,
+            "monto_recibido": Decimal opcional, "referencia": str opcional}``.
+            Vacía cuando ``estado_override == "pendiente"`` (dejar la cuenta
+            pendiente sin recibir dinero todavía, ej. "Pagar luego").
+        estado_override: si es ``"pendiente"``, marca la factura como
+            cuenta pendiente en vez de procesar pagos.
+        datos_adicionales: ``{"nombre_cliente", "comentario"}`` para el caso
+            "pendiente".
+        usuario: usuario que está cobrando (para enlazar el pago a su turno
+            de caja abierto, si tiene uno).
+
+    Returns:
+        tuple[Factura, list[Transaccionpago]]: la factura actualizada y las
+        transacciones creadas (lista vacía si quedó "pendiente" sin pagos).
+
+    Raises:
+        ValueError: si la factura/método no existen, el estado es inválido,
+            o los montos no tienen sentido.
     """
     try:
-        metodo = MetodoPago.objects.get(id=metodo_pago_id)
-        # Hacemos la búsqueda más flexible para aceptar facturas en borrador o abiertas
-        factura = Factura.objects.select_for_update().get(id=factura_id, estado__in=["abierta", "borrador"])
-    except MetodoPago.DoesNotExist:
-        raise ValueError("Método de pago no encontrado.")
-    except Factura.DoesNotExist:
-        raise ValueError("Factura no encontrada, ya procesada, o en un estado inválido.")
+        factura = Factura.objects.select_for_update().get(
+            id=factura_id, estado__in=["abierta", "borrador", "pendiente"],
+        )
+    except Factura.DoesNotExist as exc:
+        raise ValueError("Factura no encontrada, ya procesada, o en un estado inválido.") from exc
 
-    # Lógica "Pagar luego"
-    if metodo.tipo_metodo == "Pagar luego" or estado_override == "pendiente":
-        # Llamamos a nuestra función limpia
-        afectar_inventario_por_venta(factura)
-        
+    es_primer_pago = factura.estado in ("abierta", "borrador")
+
+    # "Pagar luego": se dispone a esperar el pago, sin registrar ningún
+    # ingreso de dinero todavía. Requiere un único método (el que el
+    # cliente dice que usará), no una lista de pagos reales.
+    if estado_override == "pendiente":
+        metodo_id = datos_adicionales.get("metodo_pago_id") or (pagos[0]["metodo_pago_id"] if pagos else None)
+        metodo = None
+        if metodo_id:
+            try:
+                metodo = MetodoPago.objects.get(id=metodo_id)
+            except MetodoPago.DoesNotExist as exc:
+                raise ValueError("Método de pago no encontrado.") from exc
+
+        if es_primer_pago:
+            afectar_inventario_por_venta(factura)
+
         factura.metodo_pago = metodo
         factura.estado = "pendiente"
         factura.nombre_cliente_pendiente = datos_adicionales.get("nombre_cliente", "")
         factura.comentario_pendiente = datos_adicionales.get("comentario", "")
         factura.save()
-        return factura, None
+        return factura, []
 
-    # Lógica Pago Completo
-    if monto_recibido is None or float(monto_recibido) < float(factura.total):
-        raise ValueError(f"Monto insuficiente. Se requiere {factura.total}")
+    if not pagos:
+        raise ValueError("Debe indicar al menos un pago.")
 
-    # Llamamos a nuestra función limpia
-    afectar_inventario_por_venta(factura)
-    
-    factura.metodo_pago = metodo
-    factura.estado = "pagado"
-    factura.fecha_pago = timezone.now()
+    ya_pagado = Transaccionpago.objects.filter(
+        factura=factura, activo=True, estado="exitoso",
+    ).aggregate(total=Sum("monto"))["total"] or Decimal("0.00")
+    total_factura = factura.total or Decimal("0.00")
+
+    caja_sesion = None
+    if usuario is not None:
+        caja_sesion = CajaSesion.objects.filter(usuario=usuario, activo=True).first()
+
+    transacciones = []
+    total_nuevo = Decimal("0.00")
+    for entrada in pagos:
+        try:
+            metodo = MetodoPago.objects.get(id=entrada["metodo_pago_id"])
+        except MetodoPago.DoesNotExist as exc:
+            raise ValueError("Método de pago no encontrado.") from exc
+        except KeyError as exc:
+            raise ValueError("Cada pago debe indicar 'metodo_pago_id'.") from exc
+
+        try:
+            monto = _round(entrada["monto"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("Cada pago debe indicar un 'monto' válido.") from exc
+        if monto <= 0:
+            raise ValueError("El monto de cada pago debe ser mayor que cero.")
+
+        monto_recibido_raw = entrada.get("monto_recibido")
+        monto_recibido = _round(monto_recibido_raw) if monto_recibido_raw not in (None, "") else monto
+        if monto_recibido < monto:
+            # No tiene sentido "recibir menos de lo que se está registrando
+            # como pagado" -- probablemente un error de tipeo del cajero.
+            monto_recibido = monto
+        vuelto = _round(monto_recibido - monto)
+
+        transaccion = Transaccionpago.objects.create(
+            orden=factura.orden,
+            factura=factura,
+            monto=monto,
+            monto_recibido=monto_recibido,
+            vuelto=vuelto,
+            metodo_pago=metodo,
+            caja_sesion=caja_sesion,
+            estado="exitoso",
+            codigo_transaccion=str(uuid.uuid4()),
+            referencia=(entrada.get("referencia") or "").strip() or None,
+            fecha=timezone.now(),
+            activo=True,
+        )
+        transacciones.append(transaccion)
+        total_nuevo += monto
+
+    if es_primer_pago:
+        # Solo se afecta el stock la PRIMERA vez que se registra un pago
+        # sobre esta factura -- una venta a crédito puede recibir varios
+        # abonos después, y el stock ya se descontó en el primero.
+        afectar_inventario_por_venta(factura)
+
+    nuevo_total_pagado = ya_pagado + total_nuevo
+    if len(transacciones) == 1:
+        factura.metodo_pago = transacciones[0].metodo_pago
+
+    if nuevo_total_pagado + CENT >= total_factura:
+        factura.estado = "pagado"
+        factura.fecha_pago = timezone.now()
+    else:
+        # Abono parcial: la factura sigue pendiente de cobro por el saldo
+        # restante (total_factura - nuevo_total_pagado).
+        factura.estado = "pendiente"
+        factura.condicion_pago = "credito"
+
     factura.save()
 
-    # Registro de la transacción
-    transaccion = Transaccionpago.objects.create(
-        orden=factura.orden, # Enlazando si existe orden
-        monto=factura.total,
-        metodo_pago=metodo,
-        estado="exitoso",
-        codigo_transaccion=str(uuid.uuid4()),
-        fecha=timezone.now(),
-        activo=True
-    )
-    
-    return factura, transaccion
+    return factura, transacciones
+
+
+def calcular_saldo_pendiente(factura: Factura) -> Decimal:
+    """Saldo que le falta pagar a una factura (total - suma de pagos exitosos ya registrados)."""
+    ya_pagado = Transaccionpago.objects.filter(
+        factura=factura, activo=True, estado="exitoso",
+    ).aggregate(total=Sum("monto"))["total"] or Decimal("0.00")
+    return _round((factura.total or Decimal("0.00")) - ya_pagado)

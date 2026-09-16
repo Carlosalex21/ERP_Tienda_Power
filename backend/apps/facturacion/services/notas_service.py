@@ -16,7 +16,10 @@ from django.db import transaction
 
 
 
-from apps.configuracion.core.config_service import obtener_y_actualizar_numero_control
+from apps.configuracion.core.config_service import (
+    obtener_y_actualizar_numero_control_nota_credito,
+    obtener_y_actualizar_numero_control_nota_debito,
+)
 
 from apps.facturacion.models import Factura, NotaCredito, NotaDebito
 
@@ -42,14 +45,22 @@ def _proporcionar(factura: Factura, monto: Decimal) -> dict[str, Decimal]:
 
     El monto de la nota es una fracción del total de la factura; se aplica esa
     misma proporción a la base, IVA y retención para no distorsionar el
-    desglose fiscal.
+    desglose fiscal. `monto` se interpreta en la MISMA moneda que la propia
+    factura (igual que `factura.total`) -- así que la nota (`NotaCredito`/
+    `NotaDebito`) queda, a propósito, en esa misma moneda: es "una porción
+    de esta factura", tiene sentido mostrarla en los mismos términos que
+    ella. Los `_base` de este dict son la misma proporción aplicada a los
+    montos YA convertidos a la moneda base de la factura -- se usan solo
+    para registrar la nota en el Libro Fiscal (ver `registrar_en_libro_compra_venta`
+    en los llamadores), que no distingue moneda por fila y por lo tanto
+    nunca debe recibir un monto crudo de una factura en moneda extranjera.
 
     Args:
         factura: Factura origen.
-        monto: Monto de la nota (positivo).
+        monto: Monto de la nota, en la moneda de la factura (positivo).
 
     Returns:
-        dict: ``{base_imponible, iva, retencion, total}``.
+        dict: ``{base_imponible, iva, retencion, total, base_imponible_base, iva_base, retencion_base, total_base}``.
     """
     monto = _round(monto)
     total_factura = factura.total or Decimal("0.00")
@@ -62,6 +73,10 @@ def _proporcionar(factura: Factura, monto: Decimal) -> dict[str, Decimal]:
         "iva": _round(factura.iva_total * proporcion),
         "retencion": _round(factura.retencion_total * proporcion),
         "total": monto,
+        "base_imponible_base": _round(factura.base_imponible_base * proporcion),
+        "iva_base": _round(factura.iva_base * proporcion),
+        "retencion_base": _round(factura.retencion_base * proporcion),
+        "total_base": _round(factura.total_base * proporcion),
     }
 
 
@@ -109,7 +124,11 @@ def crear_nota_credito(factura_id: int, monto: Decimal, motivo: str) -> NotaCred
         )
 
     distribuido = _proporcionar(factura, monto)
-    numero_control = obtener_y_actualizar_numero_control()
+    # Secuencia propia de Nota de Crédito -- antes usaba la misma que las
+    # facturas (`obtener_y_actualizar_numero_control`), así que cada nota
+    # emitida "robaba" un número de la numeración de facturas en vez de
+    # llevar su propia serie correlativa, como exige el SENIAT.
+    numero_control = obtener_y_actualizar_numero_control_nota_credito()
 
     nota = NotaCredito.objects.create(
         factura=factura,
@@ -120,6 +139,10 @@ def crear_nota_credito(factura_id: int, monto: Decimal, motivo: str) -> NotaCred
         iva_total=distribuido["iva"],
         retencion_total=distribuido["retencion"],
         total=monto,
+        base_imponible_base=distribuido["base_imponible_base"],
+        iva_base=distribuido["iva_base"],
+        retencion_base=distribuido["retencion_base"],
+        total_base=distribuido["total_base"],
     )
 
     # Registro en el Libro de Venta (monto negativo = resta el débito fiscal).
@@ -131,10 +154,10 @@ def crear_nota_credito(factura_id: int, monto: Decimal, motivo: str) -> NotaCred
         numero_control=nota.numero_control,
         rif=factura.cliente.documento if factura.cliente else None,
         razon_social=factura.cliente.nombre if factura.cliente else "Consumidor Final",
-        base_imponible=-distribuido["base_imponible"],
-        iva=-distribuido["iva"],
-        retencion=-distribuido["retencion"],
-        total=-monto,
+        base_imponible=-distribuido["base_imponible_base"],
+        iva=-distribuido["iva_base"],
+        retencion=-distribuido["retencion_base"],
+        total=-distribuido["total_base"],
     )
 
     return nota
@@ -170,7 +193,8 @@ def crear_nota_debito(factura_id: int, monto: Decimal, motivo: str) -> NotaDebit
         raise NotaServiceError("El monto de la nota de débito debe ser mayor que cero.")
 
     distribuido = _proporcionar(factura, monto)
-    numero_control = obtener_y_actualizar_numero_control()
+    # Ver el mismo comentario en `crear_nota_credito`.
+    numero_control = obtener_y_actualizar_numero_control_nota_debito()
 
     nota = NotaDebito.objects.create(
         factura=factura,
@@ -180,6 +204,9 @@ def crear_nota_debito(factura_id: int, monto: Decimal, motivo: str) -> NotaDebit
         base_imponible=distribuido["base_imponible"],
         iva_total=distribuido["iva"],
         total=monto,
+        base_imponible_base=distribuido["base_imponible_base"],
+        iva_base=distribuido["iva_base"],
+        total_base=distribuido["total_base"],
     )
 
     # Registro en el Libro de Venta (monto positivo = incrementa débito fiscal).
@@ -191,10 +218,10 @@ def crear_nota_debito(factura_id: int, monto: Decimal, motivo: str) -> NotaDebit
         numero_control=nota.numero_control,
         rif=factura.cliente.documento if factura.cliente else None,
         razon_social=factura.cliente.nombre if factura.cliente else "Consumidor Final",
-        base_imponible=distribuido["base_imponible"],
-        iva=distribuido["iva"],
+        base_imponible=distribuido["base_imponible_base"],
+        iva=distribuido["iva_base"],
         retencion=Decimal("0.00"),
-        total=monto,
+        total=distribuido["total_base"],
     )
 
     return nota

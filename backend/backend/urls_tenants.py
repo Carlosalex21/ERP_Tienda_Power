@@ -8,7 +8,10 @@ from drf_spectacular.views import (
     SpectacularRedocView, 
     SpectacularSwaggerView,
 )
-from apps.tenants.api.views_subscription import TenantProfileView
+from apps.tenants.api.views_subscription import (
+    TenantProfileView, PlanViewSet, PeriodosSuscripcionView, PlatformPaymentInfoView,
+    CrearPagoSuscripcionDesdeAdminView, TasaBcvPlataformaView,
+)
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -34,13 +37,24 @@ urlpatterns = [
     path('api/v1/reportes/', include('apps.reportes.urls')),
     # Endpoint para que el frontend obtenga el perfil del tenant actual
     path('api/v1/tenants/profile/', TenantProfileView.as_view(), name='tenant-profile'),
+    # Gestión del plan/suscripción DESDE el propio panel del tenant (sin
+    # tener que cruzar al dominio raíz e iniciar sesión de nuevo como el
+    # dueño) -- estos modelos viven en el esquema público (SHARED_APPS),
+    # pero sus vistas de lectura/creación de pago también deben quedar
+    # accesibles vía el urlconf del tenant.
+    path('api/v1/tenants/plans/', PlanViewSet.as_view({'get': 'list'}), name='tenant-plans-list'),
+    path('api/v1/tenants/periodos-suscripcion/', PeriodosSuscripcionView.as_view(), name='tenant-periodos-suscripcion'),
+    path('api/v1/tenants/payment-info/', PlatformPaymentInfoView.as_view(), name='tenant-payment-info'),
+    path('api/v1/tenants/tasa-bcv/', TasaBcvPlataformaView.as_view(), name='tenant-tasa-bcv'),
+    path('api/v1/tenants/pagos-suscripcion-admin/', CrearPagoSuscripcionDesdeAdminView.as_view(), name='tenant-crear-pago-suscripcion'),
     path('api/v1/configuracion/', include('apps.configuracion.urls')),
+    path('api/v1/auditoria/', include('apps.auditoria.urls')),
     path('api/v1/clientes/', include('apps.clientes.urls')),
     path('api/v1/proveedores/', include('apps.proveedores.urls')),
     path('api/v1/pagos/', include('apps.pagos.urls')), # Nueva app de pagos
     
     # URLs publicas para el catalogo y pedidos del cliente
-    path('api/v1/public/', include('apps.facturacion.urls_public')),
+    path('api/v1/public/', include('apps.catalogo_publico.urls')),
 
 ] + static(settings.MEDIA_URL, document_root=settings.MEDIA_ROOT)
 

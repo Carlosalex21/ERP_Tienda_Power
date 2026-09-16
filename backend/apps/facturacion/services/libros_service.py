@@ -46,26 +46,43 @@ def registrar_en_libro_compra_venta(
         total: Monto total.
 
     Returns:
-        LibroCompraVenta: La línea creada.
+        LibroCompraVenta: La línea creada o actualizada.
     """
-    return LibroCompraVenta.objects.create(
-        tipo_libro=tipo_libro,
-        fecha_operacion=fecha_operacion,
+    # `update_or_create` (no `create` a secas): esto se llama tanto desde
+    # `Factura.save()` (que corre en CADA guardado de una factura ya
+    # numerada, no solo la primera vez) como potencialmente más de una vez
+    # para el mismo documento -- sin upsert, cada guardado posterior
+    # duplicaría la línea en el Libro en vez de mantenerla al día.
+    linea, _creada = LibroCompraVenta.objects.update_or_create(
         tipo_documento=tipo_documento,
         numero_documento=numero_documento,
-        numero_control=numero_control,
-        rif=rif,
-        razon_social=razon_social,
-        base_imponible=Decimal(base_imponible or 0),
-        iva=Decimal(iva or 0),
-        retencion=Decimal(retencion or 0),
-        total=Decimal(total or 0),
+        defaults=dict(
+            tipo_libro=tipo_libro,
+            fecha_operacion=fecha_operacion,
+            numero_control=numero_control,
+            rif=rif,
+            razon_social=razon_social,
+            base_imponible=Decimal(base_imponible or 0),
+            iva=Decimal(iva or 0),
+            retencion=Decimal(retencion or 0),
+            total=Decimal(total or 0),
+            activo=True,
+        ),
     )
+    return linea
 
 
-def registrar_factura_en_libro(factura) -> LibroCompraVenta:
+def registrar_factura_en_libro(factura) -> Optional[LibroCompraVenta]:
     """
-    Registra una factura en el libro de ventas.
+    Registra (o actualiza) una factura en el libro de ventas.
+
+    Solo tiene sentido una vez que la factura tiene número fiscal
+    (``correlativo``) -- antes de eso es un borrador/carrito que puede no
+    llegar a concretarse nunca, y no hay número de documento con el cual
+    identificarla en el Libro. Se llama desde ``Factura.save()`` en cada
+    guardado; gracias al upsert de ``registrar_en_libro_compra_venta`` (por
+    ``numero_documento``), es seguro llamarla más de una vez para la misma
+    factura -- actualiza la línea existente en vez de duplicarla.
 
     Si la factura tiene cliente, usa sus datos (RIF, razón social). En caso
     contrario, usa la configuración de la empresa (operación a consumidor
@@ -75,8 +92,12 @@ def registrar_factura_en_libro(factura) -> LibroCompraVenta:
         factura: Instancia de ``Factura``.
 
     Returns:
-        LibroCompraVenta: La línea registrada.
+        LibroCompraVenta | None: La línea registrada, o ``None`` si la
+        factura todavía no tiene correlativo asignado.
     """
+    if not factura.correlativo:
+        return None
+
     from apps.configuracion.models import ConfiguracionEmpresa
 
     razon_social = None
@@ -92,17 +113,23 @@ def registrar_factura_en_libro(factura) -> LibroCompraVenta:
         rif = empresa.rif if empresa else None
 
     return registrar_en_libro_compra_venta(
-
-
         tipo_libro="venta",
         fecha_operacion=factura.fecha_operacion.date(),
         tipo_documento="Factura",
-        numero_documento=factura.correlativo or "",
+        numero_documento=factura.correlativo,
         numero_control=factura.numero_control,
         rif=rif,
         razon_social=razon_social or "Consumidor Final",
-        base_imponible=factura.base_imponible,
-        iva=factura.iva_total,
-        retencion=factura.retencion_total,
-        total=factura.total,
+        # `_base`, no los campos "crudos": el Libro Fiscal no distingue
+        # moneda por fila (no tiene ni un campo para eso), así que si una
+        # factura se emitió en USD y otra en Bs, sumar sus montos crudos ahí
+        # mezcla dólares con bolívares como si fueran la misma unidad. Los
+        # `_base` ya vienen convertidos a la moneda base del tenant usando
+        # la tasa de cambio congelada en ESA factura al momento de emitirse
+        # (no la tasa de hoy), así que el Libro queda siempre en una sola
+        # moneda -- la local -- sin perder la conversión histórica correcta.
+        base_imponible=factura.base_imponible_base,
+        iva=factura.iva_base,
+        retencion=factura.retencion_base,
+        total=factura.total_base,
     )

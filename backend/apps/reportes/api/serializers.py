@@ -22,6 +22,13 @@ class VentaReporteSerializer(serializers.Serializer):
     fecha_operacion = serializers.DateTimeField()
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     total = serializers.DecimalField(max_digits=10, decimal_places=2)
+    # Moneda en la que se emitió ESTA factura y el mismo total ya convertido
+    # a la moneda base del tenant (con la tasa de cambio congelada en la
+    # factura, no la de hoy) -- un reporte de ventas mezclando facturas en
+    # distintas monedas necesita esto para no sumar dólares con bolívares
+    # como si fueran la misma unidad.
+    moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True, default=None)
+    total_base = serializers.DecimalField(max_digits=14, decimal_places=2)
     estado = serializers.CharField()
 
 class ReporteclienteSerializer(serializers.ModelSerializer):
@@ -34,16 +41,18 @@ class ReporteclienteSerializer(serializers.ModelSerializer):
 class FacturaReportSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     metodo_pago_nombre = serializers.CharField(source='metodo_pago.nombre', read_only=True)
+    moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True, default=None)
     class Meta:
         model = Factura
-        fields = ['id', 'correlativo', 'fecha_operacion', 'cliente_nombre', 'total', 'estado', 'metodo_pago_nombre']
+        fields = ['id', 'correlativo', 'fecha_operacion', 'cliente_nombre', 'total', 'moneda_codigo', 'total_base', 'estado', 'metodo_pago_nombre']
 
 class FacturaReporteSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     detalles = serializers.SerializerMethodField()
+    moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True, default=None)
     class Meta:
         model = Factura
-        fields = ['id', 'correlativo', 'fecha_operacion', 'cliente_nombre', 'total', 'estado', 'detalles']
+        fields = ['id', 'correlativo', 'fecha_operacion', 'cliente_nombre', 'total', 'moneda_codigo', 'total_base', 'estado', 'detalles']
 
     def get_detalles(self, obj):
         return [

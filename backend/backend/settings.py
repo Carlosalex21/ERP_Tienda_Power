@@ -13,14 +13,31 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-local-dev-key-123456")
 
 # En producción (Coolify), DEBUG será 'False'.
-#DEBUG = os.getenv('DEBUG', 'False') == 'True'
-DEBUG = True
+DEBUG = os.getenv('DEBUG', 'False') == 'True'
 
 # --- Configuración de ALLOWED_HOSTS para Multi-Tenancy ---
-# Para depuración, permitimos todos los hosts. Esto elimina cualquier conflicto
-# con el middleware de tenants. En producción, esto debe ser más restrictivo.
-ALLOWED_HOSTS = ['*']
+# En desarrollo (DEBUG=True) se permiten todos los hosts para no chocar con
+# el middleware de tenants al probar subdominios locales. En producción es
+# obligatorio declarar los hosts explícitamente vía la variable de entorno.
+ALLOWED_HOSTS = os.getenv('ALLOWED_HOSTS', '*' if DEBUG else '').split(',')
 
+# --- Email (recuperación de contraseña, notificaciones) ---
+# Sin backend SMTP configurado, Django intenta conectar a localhost:25 y
+# falla/cuelga. Por defecto usamos el backend de consola (imprime el correo
+# en los logs del servidor, útil en dev); en producción se fija por env var.
+EMAIL_BACKEND = os.getenv('EMAIL_BACKEND', 'django.core.mail.backends.console.EmailBackend')
+EMAIL_HOST = os.getenv('EMAIL_HOST', '')
+EMAIL_PORT = int(os.getenv('EMAIL_PORT', '587'))
+EMAIL_HOST_USER = os.getenv('EMAIL_HOST_USER', '')
+EMAIL_HOST_PASSWORD = os.getenv('EMAIL_HOST_PASSWORD', '')
+EMAIL_USE_TLS = os.getenv('EMAIL_USE_TLS', 'True') == 'True'
+DEFAULT_FROM_EMAIL = os.getenv('DEFAULT_FROM_EMAIL', 'no-reply@erpsystem.local')
+
+# Dominio (host:puerto) donde vive el FRONTEND, usado para armar links de
+# vuelta al frontend (recuperación de contraseña, etc.) -- separado de
+# `TENANT_DOMAIN` (que es el dominio del propio backend).
+FRONTEND_BASE_DOMAIN = os.getenv('FRONTEND_BASE_DOMAIN', 'localhost:3000')
+FRONTEND_BASE_URL = os.getenv('FRONTEND_BASE_URL', 'http://localhost:3000')
 
 SIMPLE_JWT = {
     "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
@@ -41,7 +58,7 @@ SIMPLE_JWT = {
 
 REST_FRAMEWORK = {
     'DEFAULT_AUTHENTICATION_CLASSES': (
-        'rest_framework_simplejwt.authentication.JWTAuthentication',
+        'apps.core.authentication.TenantBoundJWTAuthentication',
     ),
     'DEFAULT_PERMISSION_CLASSES': (
         'rest_framework.permissions.IsAuthenticated',
@@ -62,12 +79,12 @@ REST_FRAMEWORK = {
         'rest_framework.filters.OrderingFilter',
     ),
     'DEFAULT_SCHEMA_CLASS': 'drf_spectacular.openapi.AutoSchema',
-    #'EXCEPTION_HANDLER': 'apps.core.exception_handler.custom_exception_handler',
+    'EXCEPTION_HANDLER': 'apps.core.exception_handler.custom_exception_handler',
 
     'DEFAULT_THROTTLE_CLASSES': (
-        'rest_framework.throttling.AnonRateThrottle',
-        'rest_framework.throttling.UserRateThrottle',
-        'rest_framework.throttling.ScopedRateThrottle',
+        'apps.core.throttling.ResilientAnonRateThrottle',
+        'apps.core.throttling.ResilientUserRateThrottle',
+        'apps.core.throttling.ResilientScopedRateThrottle',
     ),
     'DEFAULT_THROTTLE_RATES': {
         # En desarrollo subimos los límites para no bloquear operaciones simultáneas
@@ -76,6 +93,7 @@ REST_FRAMEWORK = {
         'user': os.getenv('THROTTLE_USER', '1000/min'),
         'login': os.getenv('THROTTLE_LOGIN', '20/min'),
         'catalogo': os.getenv('THROTTLE_CATALOGO', '300/min'),
+        'password_reset': os.getenv('THROTTLE_PASSWORD_RESET', '5/min'),
     },
 }
 
@@ -119,12 +137,14 @@ TENANT_APPS = [
     #APPS
     'apps.common',
     'apps.usuarios',
+    'apps.auditoria',
     'apps.configuracion',
     'apps.clientes',
     'apps.proveedores',
     'apps.inventario',
     'apps.pagos', # Nueva app de pagos
     'apps.facturacion',
+    'apps.catalogo_publico',
     'apps.rrhh',
     'apps.reportes',
     
@@ -155,9 +175,19 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     "whitenoise.middleware.WhiteNoiseMiddleware",  # Para servir archivos estáticos en producción
     "corsheaders.middleware.CorsMiddleware",
+    # Va DESPUÉS de CorsMiddleware a propósito: esta corta la cadena y
+    # devuelve un 402 directamente (sin llamar a get_response) cuando la
+    # suscripción venció. Si fuera anterior a CorsMiddleware, esa respuesta
+    # nunca pasaría por él en el camino de vuelta y el navegador la
+    # bloqueaba por CORS (net::ERR_FAILED) en vez de mostrar el 402.
+    "apps.tenants.middleware.SubscriptionGateMiddleware",
     "django.middleware.common.CommonMiddleware",
-    #"django.middleware.csrf.CsrfViewMiddleware", temporalmente comentado
+    "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Va DESPUÉS de AuthenticationMiddleware a propósito: necesita
+    # `request.user` ya resuelto para saber quién firma cada registro de
+    # auditoría (ver `apps.auditoria.services.registrar`).
+    "apps.auditoria.middleware.AuditoriaMiddleware",
     "django.contrib.messages.middleware.MessageMiddleware",
     "django.middleware.clickjacking.XFrameOptionsMiddleware",
 ]
@@ -248,14 +278,19 @@ if 'DATABASE_URL' in os.environ:
     DATABASES['default']['ENGINE'] = 'django_tenants.postgresql_backend'
 else:
     # Desarrollo Local
+    # CONN_MAX_AGE reutiliza la conexión TCP a Postgres entre requests en vez
+    # de abrir una nueva por cada petición (comportamiento por defecto de
+    # Django sin este valor). django-tenants resetea el search_path en cada
+    # request sin importar esto, así que es seguro con multi-tenancy.
     DATABASES = {
         'default': {
             'ENGINE': 'django_tenants.postgresql_backend',
-            'NAME': 'emp_system_saas', # 
+            'NAME': 'emp_system_saas', #
             'USER': 'postgres',
             'PASSWORD': os.getenv('DB_PASSWORD', "carlosalex21"), # CAMBIARLO POR PASSWORD LOCAL
             'HOST': 'localhost',
             'PORT': '5432',
+            'CONN_MAX_AGE': 60,
         }
     }
 
@@ -308,14 +343,22 @@ REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/1')
 
 CACHES = {
     'default': {
-        'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
-        'LOCATION': 'erp-local-cache',
-    },
-    'redis_cache': {
         'BACKEND': 'django.core.cache.backends.redis.RedisCache',
         'LOCATION': REDIS_URL,
         'KEY_PREFIX': 'erp_saas',
         'TIMEOUT': int(os.getenv('CACHE_TIMEOUT', '300')),
+        # Sin esto, redis-py usa timeouts de conexión por defecto (varios
+        # segundos, y en Windows la resolución de 'localhost' puede tardar
+        # aún más). Si Redis está caído, cada get/set/throttle-check paga esa
+        # espera completa ANTES de fallar -- descubierto porque un simple
+        # guardado de configuración tardaba ~24s (6 invalidaciones de caché x
+        # ~4s cada una). El código ya está diseñado para degradar sin Redis
+        # (ver apps/core/cache_utils.py y apps/core/throttling.py); esto hace
+        # que esa degradación sea rápida (ms) en vez de lenta (segundos).
+        'OPTIONS': {
+            'socket_connect_timeout': float(os.getenv('REDIS_CONNECT_TIMEOUT', '0.05')),
+            'socket_timeout': float(os.getenv('REDIS_SOCKET_TIMEOUT', '0.05')),
+        },
     },
 }
 
@@ -330,6 +373,12 @@ CACHE_TTL = {
 # --- Seguridad: bloqueo por intentos fallidos de login (Zero Trust) ---
 LOGIN_MAX_INTENTOS = int(os.getenv('LOGIN_MAX_INTENTOS', '5'))
 LOGIN_VENTANA_MINUTOS = int(os.getenv('LOGIN_VENTANA_MINUTOS', '15'))
+
+# --- Fiscal multi-país ---
+# Último recurso cuando un tenant no tiene `ConfiguracionEmpresa.pais_codigo`
+# configurado (no debería ocurrir tras el seeding de TenantService, pero se
+# declara explícito en vez de caer en silencio a 'VE' dentro del código).
+DEFAULT_TAX_COUNTRY = os.getenv('DEFAULT_TAX_COUNTRY', 'VE')
 
 # Configuración de Celery
 CELERY_BROKER_URL = os.getenv('CELERY_BROKER_URL', 'redis://localhost:6379/0')

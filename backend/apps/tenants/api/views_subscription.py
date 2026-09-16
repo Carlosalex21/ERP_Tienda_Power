@@ -1,14 +1,28 @@
 from rest_framework import viewsets, status, generics
 from rest_framework.views import APIView
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from django.shortcuts import get_object_or_404
 from django.conf import settings
+from django.utils.decorators import method_decorator
+from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
-from apps.tenants.models import Plan, Subscription, Client, Domain
+import stripe as stripe_sdk
+from apps.core.permissions import IsTenantAdmin
+from apps.tenants.models import Plan, Subscription, Client, Domain, PlatformPaymentConfig, SubscriptionPayment
 from apps.tenants.services.subscription_service import SubscriptionService
 from apps.tenants.services.tenant_service import TenantService, TenantCreationError
-from .serializers import PlanSerializer, SubscriptionCreateSerializer, SubscriptionResponseSerializer, PlatformClientSerializer, TenantRegistrationSerializer, TenantProfileSerializer
+from apps.tenants.services import subscription_payment_service as pago_suscripcion_service
+from apps.tenants.services import platform_settings_service
+from .serializers import (
+    PlanSerializer, SubscriptionCreateSerializer, SubscriptionResponseSerializer,
+    PlatformClientSerializer, TenantRegistrationSerializer, TenantProfileSerializer,
+    TenantOnboardingUpdateSerializer,
+    MiClienteSerializer, PlatformPaymentInfoSerializer, PlatformPaymentConfigSerializer,
+    CrearPagoSuscripcionSerializer, CrearPagoSuscripcionTenantSerializer, SubscriptionPaymentSerializer,
+    PlatformSettingsSerializer, RegistrationQuotaSerializer, PeriodoSuscripcionSerializer,
+)
 
 class PlanViewSet(viewsets.ModelViewSet):
     """
@@ -72,6 +86,12 @@ class TenantRegistrationView(APIView):
         }
     )
     def post(self, request):
+        if not platform_settings_service.hay_cupo_disponible():
+            return Response(
+                {"error": "Por ahora alcanzamos el cupo de registros gratuitos disponibles. Contáctanos para más información."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
         serializer = TenantRegistrationSerializer(data=request.data)
         if not serializer.is_valid():
             return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
@@ -79,10 +99,11 @@ class TenantRegistrationView(APIView):
         data = serializer.validated_data
         try:
             TenantService.create_tenant(
-                username=data['username'], email=data['email'], 
-                password=data['password'], first_name=data['first_name'], 
+                username=data['username'], email=data['email'],
+                password=data['password'], first_name=data['first_name'],
                 last_name=data['last_name'], nombre_empresa=data['nombre_empresa'], tipo_negocio=data['tipo_negocio'],
                 subdomain=data['subdomain'],
+                pais_codigo=data['pais_codigo'],
                 plan_id=data.get('plan_id')
             )
         except TenantCreationError as e:
@@ -130,15 +151,51 @@ class SubdomainAvailabilityView(APIView):
         
         if Domain.objects.filter(domain=full_domain).exists():
             return Response({"available": False, "message": "Este subdominio ya está en uso."}, status=status.HTTP_200_OK)
-            
+
         return Response({"available": True}, status=status.HTTP_200_OK)
+
+
+class UsernameAvailabilityView(APIView):
+    """
+    Verifica si un nombre de usuario está disponible para el dueño de un
+    tenant nuevo. El username es único a nivel de PLATAFORMA (esquema
+    público, `auth.User` en SHARED_APPS) porque es con lo que se autentica
+    para pagar/gestionar su suscripción -- no tiene relación con los
+    usernames de empleados DENTRO de cada tenant, que viven en tablas
+    `auth_user` separadas por esquema y sí pueden repetirse entre tenants.
+    """
+    permission_classes = [AllowAny]
+
+    @extend_schema(
+        summary="Verificar Disponibilidad de Usuario",
+        parameters=[
+            OpenApiParameter(name='username', description='El nombre de usuario a verificar.', required=True, type=OpenApiTypes.STR, location=OpenApiParameter.QUERY),
+        ],
+        responses={200: {"description": "Respuesta sobre la disponibilidad."}},
+    )
+    def get(self, request):
+        from django.contrib.auth.models import User
+
+        username = request.query_params.get('username', '').strip()
+        if not username:
+            return Response({"error": "El parámetro 'username' es requerido."}, status=status.HTTP_400_BAD_REQUEST)
+
+        if User.objects.filter(username__iexact=username).exists():
+            return Response({"available": False, "message": "Este nombre de usuario ya está en uso."}, status=status.HTTP_200_OK)
+
+        return Response({"available": True}, status=status.HTTP_200_OK)
+
 
 class SubscriptionCUD(APIView):
     """
-    APIView para manejar la creación o actualización de una suscripción 
-    después de un pago exitoso (simulado por ahora).
+    Activación MANUAL de una suscripción, de uso exclusivo del superadmin
+    (ej. cortesías, casos especiales). El flujo real para que un tenant
+    active su plan es `CrearPagoSuscripcionView` + confirmación real de pago
+    (`SubscriptionPaymentViewSet.confirmar` o el webhook de Stripe) -- este
+    endpoint YA NO debe llamarse directamente desde el frontend del tenant,
+    porque no valida ningún pago (de ahí que ahora requiera ser admin).
     """
-    permission_classes = [IsAuthenticated] # Asumimos que el dueño está logueado en el public schema
+    permission_classes = [IsAdminUser]
 
     @extend_schema(
         summary="Crear o Actualizar una Suscripción",
@@ -177,16 +234,291 @@ class SubscriptionCUD(APIView):
         except Exception as e:
             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
-class TenantProfileView(generics.RetrieveAPIView):
+class TenantProfileView(generics.RetrieveUpdateAPIView):
     """
     Devuelve el perfil del tenant actual basado en el subdominio de la petición.
     Esencial para que el frontend conozca el contexto (ej: tipo_negocio).
+
+    También acepta PATCH -- pero solo para marcar `onboarding_completado`
+    (ver `TenantOnboardingUpdateSerializer`): el resto de campos del perfil
+    no son editables desde este endpoint.
     """
     permission_classes = [IsAuthenticated]
-    serializer_class = TenantProfileSerializer
 
     def get_object(self):
         """
         Devuelve el objeto tenant asociado a la petición actual.
         """
         return self.request.tenant
+
+    def get_serializer_class(self):
+        if self.request.method in ('PATCH', 'PUT'):
+            return TenantOnboardingUpdateSerializer
+        return TenantProfileSerializer
+
+
+# --- COBRO DE SUSCRIPCIONES SAAS (el tenant le paga a LA PLATAFORMA) ---
+# No confundir con `apps.pagos` (SHARED_APPS -> TENANT_APPS): esa app es la
+# pasarela que cada tenant configura para cobrarle a SUS clientes finales en
+# su catálogo público. Aquí el flujo de dinero es el opuesto: el dueño del
+# tenant le paga a la plataforma para mantener su suscripción activa.
+
+class MiClienteView(generics.RetrieveAPIView):
+    """
+    Devuelve el `Client` (tenant) del usuario autenticado en el esquema
+    público. Lo usa la pantalla de pago de suscripción para saber a quién
+    cobrarle y qué país eligió en el onboarding (determina el método de pago).
+    """
+    permission_classes = [IsAuthenticated]
+    serializer_class = MiClienteSerializer
+
+    def get_object(self):
+        return get_object_or_404(
+            Client.objects.select_related('subscription__plan'), owner=self.request.user
+        )
+
+
+class PlatformPaymentInfoView(APIView):
+    """
+    Datos PÚBLICOS de cobro de la plataforma (Pago Móvil/Zelle de Carlos y la
+    publishable key de Stripe). Nunca expone claves secretas.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        config = pago_suscripcion_service.obtener_config_pago_plataforma()
+        return Response(PlatformPaymentInfoSerializer(config).data)
+
+
+class TasaBcvPlataformaView(APIView):
+    """
+    Tasa oficial BCV del día, para que el panel de suscripción muestre el
+    equivalente en bolívares del monto en USD que cobra la plataforma (Pago
+    Móvil solo admite bolívares -- antes el tenant tenía que calcularlo a
+    mano). No depende de la configuración de moneda de ningún tenant: usa
+    directamente el mismo servicio que `bcv_service` usa para las tasas
+    operativas del tenant, pero sin escribir nada en base de datos.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        from apps.configuracion.services.bcv_service import obtener_tasa_bcv_oficial, BcvApiError
+        try:
+            tasa = obtener_tasa_bcv_oficial()
+        except BcvApiError:
+            return Response({"tasa": None})
+        return Response({"tasa": str(tasa)})
+
+
+class PlatformPaymentConfigView(generics.RetrieveUpdateAPIView):
+    """
+    CRUD (get/patch) de la configuración de cobro de la plataforma, solo
+    para el superadmin: aquí Carlos carga SU PROPIO Pago Móvil/Zelle y sus
+    propias credenciales de Stripe (no las de un tenant).
+    """
+    permission_classes = [IsAdminUser]
+    serializer_class = PlatformPaymentConfigSerializer
+
+    def get_object(self):
+        return pago_suscripcion_service.obtener_config_pago_plataforma()
+
+
+class CrearPagoSuscripcionView(APIView):
+    """
+    Punto de entrada real para que el dueño de un tenant pague su
+    suscripción. El método de pago queda determinado por `Client.pais_codigo`
+    (Venezuela -> Pago Móvil/Zelle manual; resto -> Stripe), este endpoint
+    solo valida que el método elegido coincida con lo esperado para ese país.
+    """
+    permission_classes = [IsAuthenticated]
+
+    @extend_schema(
+        summary="Iniciar el pago de una suscripción",
+        request=CrearPagoSuscripcionSerializer,
+        responses={201: {"description": "Pago pendiente creado (y, si es Stripe, URL de checkout)."}},
+    )
+    def post(self, request):
+        serializer = CrearPagoSuscripcionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        client = get_object_or_404(Client, id=data['client_id'])
+        if client.owner != request.user:
+            return Response({"error": "No tienes permiso para pagar la suscripción de este cliente."}, status=status.HTTP_403_FORBIDDEN)
+        plan = get_object_or_404(Plan, id=data['plan_id'], activo=True)
+
+        base_frontend = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3000')
+        try:
+            pago, checkout_url = pago_suscripcion_service.crear_pago_suscripcion(
+                client=client,
+                plan=plan,
+                metodo=data['metodo'],
+                referencia=data.get('referencia', ''),
+                periodo=data.get('periodo', 'mensual'),
+                success_url=f"{base_frontend}/pago?stripe=success&subdominio={client.schema_name}",
+                cancel_url=f"{base_frontend}/pago?stripe=cancel&plan={plan.slug or ''}&subdominio={client.schema_name}",
+            )
+        except pago_suscripcion_service.PagoSuscripcionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "pago_id": pago.id,
+            "estado": pago.estado,
+            "metodo": pago.metodo,
+            "periodo": pago.periodo,
+            "monto": str(pago.monto),
+            "checkout_url": checkout_url,
+        }, status=status.HTTP_201_CREATED)
+
+
+class CrearPagoSuscripcionDesdeAdminView(APIView):
+    """
+    Mismo flujo que `CrearPagoSuscripcionView`, pero pensado para llamarse
+    DESDE el propio panel del tenant (`/admin/suscripcion`), autenticado como
+    empleado/administrador del tenant -- no como el dueño en el esquema
+    público.
+
+    Estos son dos sistemas de login separados a propósito (el dueño paga la
+    plataforma; el empleado opera el negocio), con tokens que NO son
+    intercambiables entre sí (cada uno se valida contra la tabla `auth_user`
+    de un esquema distinto). Antes, la única forma de gestionar el plan era
+    cruzar al dominio raíz `/pago` y volver a iniciar sesión como el dueño
+    -- aquí no hace falta: como la petición ya llegó enrutada al esquema del
+    tenant, `request.tenant` YA ES el `Client` a cobrar, sin tener que
+    resolverlo por `owner == request.user`.
+    """
+    permission_classes = [IsTenantAdmin]
+
+    @extend_schema(
+        summary="Iniciar el pago de una suscripción (desde el panel del tenant)",
+        request=CrearPagoSuscripcionTenantSerializer,
+        responses={201: {"description": "Pago pendiente creado (y, si es Stripe, URL de checkout)."}},
+    )
+    def post(self, request):
+        serializer = CrearPagoSuscripcionTenantSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        data = serializer.validated_data
+
+        client = request.tenant
+        plan = get_object_or_404(Plan, id=data['plan_id'], activo=True)
+
+        # A diferencia del flujo del dueño, aquí el redirect de Stripe debe
+        # volver al SUBDOMINIO del tenant (no al dominio raíz) -- si no, el
+        # navegador vuelve a `/admin/suscripcion` sin el contexto del tenant.
+        base_frontend = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3000')
+        base_sin_protocolo = base_frontend.split('://', 1)[-1]
+        tenant_frontend = f"http://{client.schema_name}.{base_sin_protocolo}"
+        try:
+            pago, checkout_url = pago_suscripcion_service.crear_pago_suscripcion(
+                client=client,
+                plan=plan,
+                metodo=data['metodo'],
+                referencia=data.get('referencia', ''),
+                periodo=data.get('periodo', 'mensual'),
+                success_url=f"{tenant_frontend}/admin/suscripcion?stripe=success",
+                cancel_url=f"{tenant_frontend}/admin/suscripcion?stripe=cancel",
+            )
+        except pago_suscripcion_service.PagoSuscripcionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        return Response({
+            "pago_id": pago.id,
+            "estado": pago.estado,
+            "metodo": pago.metodo,
+            "periodo": pago.periodo,
+            "monto": str(pago.monto),
+            "checkout_url": checkout_url,
+        }, status=status.HTTP_201_CREATED)
+
+
+class PeriodosSuscripcionView(APIView):
+    """
+    Públicos: los períodos de facturación disponibles (mensual/trimestral/
+    anual) con sus descuentos, para que el frontend calcule y muestre los
+    mismos montos que realmente cobrará `crear_pago_suscripcion`.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        data = [
+            {"codigo": codigo, **info}
+            for codigo, info in pago_suscripcion_service.PERIODOS_SUSCRIPCION.items()
+        ]
+        return Response(PeriodoSuscripcionSerializer(data, many=True).data)
+
+
+@method_decorator(csrf_exempt, name='dispatch')
+class StripeSuscripcionWebhookView(APIView):
+    """
+    Webhook de Stripe para confirmar automáticamente el pago de una
+    suscripción (cuenta de Stripe de LA PLATAFORMA, distinta de la de cada
+    tenant en `apps.pagos.StripeConfig`).
+    """
+    permission_classes = [AllowAny]
+    authentication_classes = []
+
+    def post(self, request):
+        payload = request.body
+        sig_header = request.META.get('HTTP_STRIPE_SIGNATURE', '')
+        try:
+            pago_suscripcion_service.procesar_webhook_stripe(payload, sig_header)
+        except pago_suscripcion_service.StripePlataformaNoConfiguradoError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except (stripe_sdk.error.SignatureVerificationError, ValueError):
+            return Response({"error": "Firma de webhook inválida."}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"received": True}, status=status.HTTP_200_OK)
+
+
+class SubscriptionPaymentViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Vista de superadmin para revisar y confirmar/rechazar pagos de
+    suscripción manuales (Pago Móvil/Zelle) -- los de Stripe normalmente se
+    confirman solos vía webhook, pero también quedan visibles aquí.
+    """
+    queryset = SubscriptionPayment.objects.select_related('client', 'plan', 'confirmado_por').all()
+    serializer_class = SubscriptionPaymentSerializer
+    permission_classes = [IsAdminUser]
+    filterset_fields = ['estado', 'metodo']
+
+    @action(detail=True, methods=['post'])
+    def confirmar(self, request, pk=None):
+        try:
+            pago = pago_suscripcion_service.confirmar_pago(pk, admin_user=request.user)
+        except pago_suscripcion_service.PagoSuscripcionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except SubscriptionPayment.DoesNotExist:
+            return Response({"error": "Pago no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(SubscriptionPaymentSerializer(pago).data)
+
+    @action(detail=True, methods=['post'])
+    def rechazar(self, request, pk=None):
+        motivo = request.data.get('motivo', '')
+        try:
+            pago = pago_suscripcion_service.rechazar_pago(pk, admin_user=request.user, motivo=motivo)
+        except pago_suscripcion_service.PagoSuscripcionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        except SubscriptionPayment.DoesNotExist:
+            return Response({"error": "Pago no encontrado."}, status=status.HTTP_404_NOT_FOUND)
+        return Response(SubscriptionPaymentSerializer(pago).data)
+
+
+class RegistrationQuotaView(APIView):
+    """Cuántos cupos de registro gratuito quedan (público, para mostrarlo en el formulario de alta)."""
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        config = platform_settings_service.obtener_configuracion()
+        data = {
+            'cupos_restantes': platform_settings_service.cupos_restantes(),
+            'cupo_total': config.limite_registros_gratis,
+        }
+        return Response(RegistrationQuotaSerializer(data).data)
+
+
+class PlatformSettingsView(generics.RetrieveUpdateAPIView):
+    """Configuración global de la plataforma (cupo gratis, días de gracia), solo superadmin."""
+    permission_classes = [IsAdminUser]
+    serializer_class = PlatformSettingsSerializer
+
+    def get_object(self):
+        return platform_settings_service.obtener_configuracion()

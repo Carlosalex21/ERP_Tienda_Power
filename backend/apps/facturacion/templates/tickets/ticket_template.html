@@ -1,0 +1,130 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  {% if paper_size == '58' or paper_size == '80' %}
+  @page { size: {% if paper_size == '58' %}58mm 200mm{% else %}80mm 250mm{% endif %}; margin: 2mm; }
+  body { width: {% if paper_size == '58' %}54mm{% else %}76mm{% endif %}; font-size: 8pt; }
+  .empresa-nombre { font-size: 10pt; }
+  .total-final { font-size: 11pt; }
+  {% else %}
+  @page { size: A4; margin: 15mm; }
+  body { font-size: 10pt; }
+  .empresa-nombre { font-size: 16pt; }
+  .total-final { font-size: 13pt; }
+  {% endif %}
+
+  body { font-family: Helvetica, Arial, sans-serif; color: #1a1a1a; }
+  table { width: 100%; border-collapse: collapse; }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .bold { font-weight: bold; }
+  .muted { color: #555555; }
+  .header { text-align: center; margin-bottom: 8px; }
+  .logo { max-width: 120px; max-height: 60px; margin-bottom: 4px; }
+  .empresa-nombre { font-weight: bold; }
+  .linea { border-top: 1px dashed #999999; margin: 6px 0; }
+  .linea-solida { border-top: 1px solid #333333; margin: 6px 0; }
+  .datos-factura td { padding: 1px 0; }
+  .tabla-items th { border-bottom: 1px solid #333333; text-align: left; padding: 3px 2px; font-size: 0.9em; }
+  .tabla-items td { padding: 3px 2px; vertical-align: top; }
+  .totales td { padding: 1px 0; }
+  .total-final td { padding: 4px 0; border-top: 1px solid #333333; font-weight: bold; }
+  .footer { text-align: center; margin-top: 10px; font-size: 0.85em; color: #555555; }
+  .badge { display: inline-block; padding: 2px 6px; border: 1px solid #333333; font-size: 0.85em; }
+  .control-destacado { background-color: #f0f0f0; }
+  .control-destacado td { padding: 3px 2px !important; }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    {% if logo_base64 %}<img class="logo" src="{{ logo_base64 }}" />{% endif %}
+    <div class="empresa-nombre">{{ empresa.nombre_comercial }}</div>
+    {% if empresa.razon_social %}<div class="muted">{{ empresa.razon_social }}</div>{% endif %}
+    {% if empresa.rif %}<div>RIF: {{ empresa.rif }}</div>{% endif %}
+    {% if empresa.direccion %}<div class="muted">{{ empresa.direccion }}</div>{% endif %}
+    {% if empresa.telefono %}<div class="muted">Tel: {{ empresa.telefono }}</div>{% endif %}
+  </div>
+
+  <div class="linea-solida"></div>
+
+  <table class="datos-factura">
+    <tr>
+      <td class="bold">{% if factura.estado == 'pendiente' %}PEDIDO{% else %}FACTURA{% endif %}</td>
+      <td class="right">{{ factura.correlativo|default:"S/N" }}</td>
+    </tr>
+    {% if factura.numero_control %}
+    <tr class="control-destacado"><td class="bold">N&deg; DE CONTROL</td><td class="right bold">{{ factura.numero_control }}</td></tr>
+    {% endif %}
+    <tr><td class="muted">Fecha</td><td class="right">{{ factura.fecha_operacion|date:"d/m/Y H:i" }}</td></tr>
+    <tr>
+      <td class="muted">Cliente</td>
+      <td class="right">{% if factura.cliente %}{{ factura.cliente.nombre }}{% elif factura.nombre_cliente_pendiente %}{{ factura.nombre_cliente_pendiente }}{% else %}Consumidor final{% endif %}</td>
+    </tr>
+    {% if factura.cliente.documento %}
+    <tr><td class="muted">Documento</td><td class="right">{{ factura.cliente.documento }}</td></tr>
+    {% endif %}
+    {% if factura.metodo_pago %}
+    <tr><td class="muted">M&eacute;todo de pago</td><td class="right">{{ factura.metodo_pago.nombre }}</td></tr>
+    {% endif %}
+    <tr><td class="muted">Condici&oacute;n de pago</td><td class="right">{% if factura.condicion_pago == 'credito' %}Cr&eacute;dito{% else %}Contado{% endif %}</td></tr>
+    {% if vendedor_nombre %}
+    <tr><td class="muted">Vendedor</td><td class="right">{{ vendedor_nombre }}</td></tr>
+    {% endif %}
+  </table>
+
+  <div class="linea"></div>
+
+  <table class="tabla-items">
+    <thead>
+      <tr>
+        <th>Producto</th>
+        <th class="center">Cant.</th>
+        <th class="right">Precio</th>
+        <th class="right">Total</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for detalle in detalles %}
+      <tr>
+        <td>
+          {% if detalle.producto %}{{ detalle.producto.nombre }}{% elif detalle.variante %}{{ detalle.variante.nombre }}{% else %}Producto{% endif %}
+          {% if detalle.variante and detalle.producto %}<br/><span class="muted">({{ detalle.variante.nombre }})</span>{% endif %}
+        </td>
+        <td class="center">{{ detalle.cantidad }}</td>
+        <td class="right">{{ detalle.precio_unitario }}</td>
+        <td class="right">{{ detalle.total_linea }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+
+  <div class="linea"></div>
+
+  <table class="totales">
+    <tr><td>Subtotal</td><td class="right">{{ moneda_simbolo }} {{ factura.subtotal }}</td></tr>
+    {% if factura.descuento_global %}
+    <tr><td>Descuento</td><td class="right">-{{ moneda_simbolo }} {{ factura.descuento_global }}</td></tr>
+    {% endif %}
+    <tr><td>IVA</td><td class="right">{{ moneda_simbolo }} {{ factura.iva_total }}</td></tr>
+    {% if factura.retencion_total %}
+    <tr><td>Retenci&oacute;n</td><td class="right">-{{ moneda_simbolo }} {{ factura.retencion_total }}</td></tr>
+    {% endif %}
+    <tr class="total-final"><td>TOTAL</td><td class="right">{{ moneda_simbolo }} {{ factura.total }}</td></tr>
+    {% if mostrar_total_base %}
+    <tr><td class="muted">Equivalente</td><td class="right muted">{{ moneda_base_simbolo }} {{ factura.total_base }}</td></tr>
+    <tr><td class="muted" colspan="2" style="font-size:0.8em;">Tasa: 1 {{ moneda_simbolo }} = {{ factura.tasa_cambio }} {{ moneda_base_simbolo }}</td></tr>
+    {% endif %}
+  </table>
+
+  <div class="footer">
+    {% if factura.estado == 'pendiente' %}
+    <div class="badge">Pendiente de confirmaci&oacute;n de pago</div>
+    {% endif %}
+    <p>&iexcl;Gracias por su compra!</p>
+  </div>
+
+</body>
+</html>

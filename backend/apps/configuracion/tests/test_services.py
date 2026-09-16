@@ -1,4 +1,4 @@
-from django_tenants.test.cases import TenantTestCase
+from apps.core.testing import BaseTenantTestCase as TenantTestCase
 from ..models import ConfiguracionCorrelativo
 from ..core.config_service import obtener_y_actualizar_correlativo
 

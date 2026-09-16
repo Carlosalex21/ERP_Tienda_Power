@@ -21,8 +21,8 @@ class FacturaAdmin(admin.ModelAdmin):
 
 @admin.register(Facturaelectronica)
 class FacturaelectronicaAdmin(admin.ModelAdmin):
-    list_display = ('factura', 'fecha_registro_aeat', 'activo')
-    list_filter = ('activo', 'fecha_registro_aeat')
+    list_display = ('factura', 'proveedor_codigo', 'estado', 'fecha_procesado', 'activo')
+    list_filter = ('estado', 'proveedor_codigo', 'activo')
     search_fields = ('factura__correlativo', 'csv')
 
 @admin.register(Cupondescuento)

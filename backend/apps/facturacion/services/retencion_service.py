@@ -60,6 +60,7 @@ def crear_comprobante_retencion(
     tipo_retencion: str,
     porcentaje: Decimal,
     base: Decimal,
+    periodo_imposicion: Optional[str] = None,
 ) -> Retencion:
     """
     Crea un comprobante de retención calculando el monto automáticamente.
@@ -68,8 +69,9 @@ def crear_comprobante_retencion(
         factura: Factura de compra asociada (opcional).
         proveedor: Proveedor al que se le retiene (opcional).
         tipo_retencion: 'islr', 'iva' u 'otros'.
-        porcentaje: Tasa porcentual (ej: 1 para 1 %).
+        porcentaje: Tasa porcentual (ej: 1 para 1 %, 75 para 75 %, 100 para 100 %).
         base: Base imponible sobre la que se aplica la retención.
+        periodo_imposicion: Periodo fiscal que declara el proveedor (ej: "2026").
 
     Returns:
         Retencion: El comprobante creado.
@@ -102,4 +104,5 @@ def crear_comprobante_retencion(
         porcentaje=Decimal(porcentaje or 0),
         base=base,
         monto=monto,
+        periodo_imposicion=periodo_imposicion or None,
     )

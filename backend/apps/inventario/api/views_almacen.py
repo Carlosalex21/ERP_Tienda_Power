@@ -8,6 +8,15 @@ class AlmacenViewSet(viewsets.ModelViewSet):
     serializer_class = AlmacenSerializer
     permission_classes = [permissions.IsAuthenticated]
 
+    def perform_create(self, serializer):
+        from apps.core.plan_limits import verificar_limite
+
+        verificar_limite(
+            self.request, 'limite_sucursales',
+            Almacen.objects.filter(activo=True).count(), 'almacenes/sucursales',
+        )
+        serializer.save()
+
     def perform_destroy(self, instance):
         instance.activo = False
         instance.save()

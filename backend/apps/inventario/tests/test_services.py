@@ -1,9 +1,11 @@
 from django.contrib.auth import get_user_model
-from django_tenants.test.cases import TenantTestCase
+from apps.core.testing import BaseTenantTestCase as TenantTestCase
 from django.test import override_settings
 from unittest.mock import patch
-from ..models import Producto, Variacionproducto, Inventario, MovimientoInventario
-from ..services.stock_service import reducir_stock_item, restaurar_stock_item, registrar_movimiento_manual
+from ..models import Producto, Variacionproducto, Inventario, MovimientoInventario, AjusteInventario
+from ..services.stock_service import (
+    reducir_stock_item, restaurar_stock_item, registrar_movimiento_manual, crear_y_aplicar_ajuste,
+)
 
 User = get_user_model()
 
@@ -18,7 +20,7 @@ class StockServiceTests(TenantTestCase):
         self.producto_simple = Producto.objects.create(nombre='Producto Simple', cantidad=20)
         self.producto_con_variante = Producto.objects.create(nombre='Camisa')
         self.variante = Variacionproducto.objects.create(producto=self.producto_con_variante, nombre='Talla M', cantidad=15)
-        self.inventario = Inventario.objects.create(producto=self.producto_simple, cantidad_disponible=20)
+        self.inventario = Inventario.objects.create(producto=self.producto_simple, cantidad=20)
 
     def test_reducir_stock_producto_simple(self, mock_woocommerce_sync):
         """Prueba que se reduce el stock de un producto simple correctamente."""
@@ -66,3 +68,52 @@ class StockServiceTests(TenantTestCase):
         self.producto_simple.refresh_from_db()
         self.assertEqual(self.producto_simple.cantidad, 15)
         self.assertTrue(MovimientoInventario.objects.filter(inventario=self.inventario, tipo_movimiento='salida').exists())
+
+    def test_crear_y_aplicar_ajuste_entrada_multilinea(self, mock_woocommerce_sync):
+        """Un ajuste de entrada con varias líneas (producto simple + variante)
+        debe sumar el stock de cada línea y dejar el ajuste con sus detalles."""
+        otro_producto = Producto.objects.create(nombre='Producto Dos', cantidad=3)
+
+        ajuste = crear_y_aplicar_ajuste(
+            usuario=self.user,
+            tipo='entrada',
+            motivo='compra_sin_factura',
+            numero_documento='NE-001',
+            detalles_data=[
+                {'producto': self.producto_simple, 'cantidad': 10},
+                {'producto': otro_producto, 'cantidad': 4},
+                {'producto': self.producto_con_variante, 'variante': self.variante, 'cantidad': 6},
+            ],
+        )
+
+        self.producto_simple.refresh_from_db()
+        otro_producto.refresh_from_db()
+        self.variante.refresh_from_db()
+
+        self.assertEqual(self.producto_simple.cantidad, 30)
+        self.assertEqual(otro_producto.cantidad, 7)
+        self.assertEqual(self.variante.cantidad, 21)
+        self.assertEqual(ajuste.detalles.count(), 3)
+        self.assertTrue(all(d.stock_resultante is not None for d in ajuste.detalles.all()))
+
+    def test_crear_y_aplicar_ajuste_salida_insuficiente_no_deja_nada_a_medias(self, mock_woocommerce_sync):
+        """Si una línea de salida no tiene stock suficiente, TODO el ajuste
+        debe revertirse -- ninguna línea previa debe quedar aplicada."""
+        otro_producto = Producto.objects.create(nombre='Producto Tres', cantidad=2)
+
+        with self.assertRaises(ValueError):
+            crear_y_aplicar_ajuste(
+                usuario=self.user,
+                tipo='salida',
+                motivo='merma',
+                detalles_data=[
+                    {'producto': self.producto_simple, 'cantidad': 5},
+                    {'producto': otro_producto, 'cantidad': 100},  # stock insuficiente
+                ],
+            )
+
+        self.producto_simple.refresh_from_db()
+        otro_producto.refresh_from_db()
+        self.assertEqual(self.producto_simple.cantidad, 20, "la primera línea no debió quedar aplicada")
+        self.assertEqual(otro_producto.cantidad, 2)
+        self.assertEqual(AjusteInventario.objects.count(), 0, "no debió quedar un ajuste huérfano")

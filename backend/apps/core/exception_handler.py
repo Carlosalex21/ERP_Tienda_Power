@@ -1,25 +1,33 @@
-from rest_framework.views import exception_handler
-from rest_framework.response import Response
-from rest_framework import status
+"""
+Exception handler global de DRF.
+
+Sin esto, un error de validación (400) devuelve el dict nativo de DRF
+(``{"campo": ["mensaje"]}``) tal cual, y el ``StandardJSONRenderer`` lo
+envuelve sin distinguir éxito de error -- queda como
+``{"data": {"campo": [...]}, "errors": null}``. El frontend
+(``getApiErrorMessages``) solo sabe leer errores desde ``errors``, así que
+terminaba mostrando siempre un mensaje genérico ("Error al guardar...")
+en vez del motivo real devuelto por el backend.
+
+Este handler intercepta la excepción ANTES del renderer y construye la
+respuesta ya en el formato estándar (``error_response_from_dict``), que se
+marca como ``erp_raw_response`` y por lo tanto el renderer la deja pasar
+sin volver a envolverla.
+"""
+from __future__ import annotations
+
+from rest_framework.views import exception_handler as drf_exception_handler
+
+from apps.core.response import error_response_from_dict
+
 
 def custom_exception_handler(exc, context):
-    # Llama al manejador de excepciones predeterminado de DRF primero
-    response = exception_handler(exc, context)
+    """Normaliza cualquier error de DRF al formato ``{data, meta, errors}``."""
+    response = drf_exception_handler(exc, context)
 
-    # Si el manejador predeterminado de DRF devuelve una respuesta, la usamos.
-    if response is not None:
-        # Puedes personalizar el formato de la respuesta aquí
-        # Por ejemplo, envolver los errores en un diccionario 'errors'
-        if isinstance(response.data, dict) and 'detail' in response.data:
-            response.data = {'error': response.data['detail']}
-        elif isinstance(response.data, dict):
-            response.data = {'errors': response.data}
-        return response
+    if response is None:
+        # Excepción no manejada por DRF (bug real): la dejamos subir para
+        # que Django la loguee/reporte normalmente en vez de ocultarla.
+        return None
 
-    # Para excepciones no manejadas por DRF, devolvemos una respuesta genérica 500
-    # y loggeamos el error.
-    # Aquí podrías añadir logging del error 'exc'
-    return Response(
-        {'error': 'Ocurrió un error inesperado en el servidor.'},
-        status=status.HTTP_500_INTERNAL_SERVER_ERROR
-    )
+    return error_response_from_dict(response.data, status_code=response.status_code)

@@ -1,16 +1,22 @@
 from django.contrib import admin
 from .models import (
-    Almacen, Categoriaproducto, Atributo, ValorAtributo, 
-    Producto, Productocategoria, Variacionproducto, 
-    Inventario, MovimientoInventario, Lecturacodigobarras, 
-    Reservastock, Transportista
+    Almacen, Categoriaproducto, Atributo, ValorAtributo,
+    Producto, Productocategoria, Variacionproducto,
+    Inventario, MovimientoInventario, Lecturacodigobarras,
+    Reservastock, Transportista, Region
 )
 
 @admin.register(Almacen)
 class AlmacenAdmin(admin.ModelAdmin):
-    list_display = ('nombre', 'estado', 'telefono', 'activo')
-    list_filter = ('estado', 'activo')
+    list_display = ('nombre', 'region', 'estado', 'telefono', 'activo')
+    list_filter = ('region__pais_codigo', 'activo')
     search_fields = ('nombre', 'direccion')
+
+@admin.register(Region)
+class RegionAdmin(admin.ModelAdmin):
+    list_display = ('nombre', 'codigo', 'pais_codigo', 'activo')
+    list_filter = ('pais_codigo', 'activo')
+    search_fields = ('nombre', 'codigo')
 
 @admin.register(Categoriaproducto)
 class CategoriaproductoAdmin(admin.ModelAdmin):
@@ -54,7 +60,7 @@ class InventarioAdmin(admin.ModelAdmin):
 
 @admin.register(MovimientoInventario)
 class MovimientoInventarioAdmin(admin.ModelAdmin):
-    list_display = ('inventario', 'tipo_movimiento', 'cantidad', 'fecha_movimiento', 'activo')
+    list_display = ('inventario', 'tipo_movimiento', 'producto', 'cantidad_movida', 'fecha_movimiento', 'activo')
     list_filter = ('tipo_movimiento', 'activo', 'fecha_movimiento')
     search_fields = ('inventario__producto__nombre',)
 

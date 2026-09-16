@@ -1,0 +1,83 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<style>
+  @page { size: A4; margin: 15mm; }
+  body { font-family: Helvetica, Arial, sans-serif; color: #1a1a1a; font-size: 10pt; }
+  table { width: 100%; border-collapse: collapse; }
+  .center { text-align: center; }
+  .right { text-align: right; }
+  .bold { font-weight: bold; }
+  .muted { color: #555555; }
+  .header { text-align: center; margin-bottom: 8px; }
+  .logo { max-width: 120px; max-height: 60px; margin-bottom: 4px; }
+  .empresa-nombre { font-weight: bold; font-size: 16pt; }
+  .linea { border-top: 1px dashed #999999; margin: 6px 0; }
+  .linea-solida { border-top: 1px solid #333333; margin: 6px 0; }
+  .datos-nota td { padding: 1px 0; }
+  .totales td { padding: 1px 0; }
+  .total-final td { padding: 4px 0; border-top: 1px solid #333333; font-weight: bold; font-size: 13pt; }
+  .footer { text-align: center; margin-top: 10px; font-size: 0.85em; color: #555555; }
+  .badge { display: inline-block; padding: 2px 6px; border: 1px solid #333333; font-size: 0.85em; }
+  .control-destacado { background-color: #f0f0f0; }
+  .control-destacado td { padding: 3px 2px !important; }
+</style>
+</head>
+<body>
+
+  <div class="header">
+    {% if logo_base64 %}<img class="logo" src="{{ logo_base64 }}" />{% endif %}
+    <div class="empresa-nombre">{{ empresa.nombre_comercial }}</div>
+    {% if empresa.razon_social %}<div class="muted">{{ empresa.razon_social }}</div>{% endif %}
+    {% if empresa.rif %}<div>RIF: {{ empresa.rif }}</div>{% endif %}
+    {% if empresa.direccion %}<div class="muted">{{ empresa.direccion }}</div>{% endif %}
+    {% if empresa.telefono %}<div class="muted">Tel: {{ empresa.telefono }}</div>{% endif %}
+  </div>
+
+  <div class="linea-solida"></div>
+
+  <table class="datos-nota">
+    <tr>
+      <td class="bold">{{ tipo_documento_label }}</td>
+      <td class="right">{{ nota.numero_nota }}</td>
+    </tr>
+    {% if nota.numero_control %}
+    <tr class="control-destacado"><td class="bold">N&deg; DE CONTROL</td><td class="right bold">{{ nota.numero_control }}</td></tr>
+    {% endif %}
+    <tr><td class="muted">Fecha</td><td class="right">{{ nota.fecha_emision|date:"d/m/Y H:i" }}</td></tr>
+    <tr>
+      <td class="muted">Factura Afectada</td>
+      <td class="right">{{ nota.factura.correlativo|default:"S/N" }}</td>
+    </tr>
+    <tr>
+      <td class="muted">Cliente</td>
+      <td class="right">{% if nota.factura.cliente %}{{ nota.factura.cliente.nombre }}{% else %}Consumidor final{% endif %}</td>
+    </tr>
+    {% if nota.factura.cliente.documento %}
+    <tr><td class="muted">Documento</td><td class="right">{{ nota.factura.cliente.documento }}</td></tr>
+    {% endif %}
+    <tr><td class="muted">Motivo</td><td class="right">{{ nota.motivo }}</td></tr>
+  </table>
+
+  <div class="linea"></div>
+
+  <table class="totales">
+    <tr><td>Base Imponible</td><td class="right">{{ moneda_simbolo }} {{ nota.base_imponible }}</td></tr>
+    <tr><td>IVA</td><td class="right">{{ moneda_simbolo }} {{ nota.iva_total }}</td></tr>
+    {% if nota.retencion_total %}
+    <tr><td>Retenci&oacute;n</td><td class="right">-{{ moneda_simbolo }} {{ nota.retencion_total }}</td></tr>
+    {% endif %}
+    <tr class="total-final"><td>TOTAL</td><td class="right">{{ moneda_simbolo }} {{ nota.total }}</td></tr>
+    {% if mostrar_total_base %}
+    <tr><td class="muted">Equivalente</td><td class="right muted">{{ moneda_base_simbolo }} {{ nota.total_base }}</td></tr>
+    <tr><td class="muted" colspan="2" style="font-size:0.8em;">Tasa: 1 {{ moneda_simbolo }} = {{ nota.factura.tasa_cambio }} {{ moneda_base_simbolo }}</td></tr>
+    {% endif %}
+  </table>
+
+  <div class="footer">
+    <p>Documento generado conforme a las providencias del SENIAT.</p>
+  </div>
+
+</body>
+</html>

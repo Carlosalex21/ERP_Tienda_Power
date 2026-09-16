@@ -56,10 +56,6 @@ class ReporteventaView(APIView):
         return Response(serializer.data)
 
 class FacturaDetalleReporteView(APIView):
-    permission_classes = [IsAuthenticated]
-
-
-class FacturaDetalleReporteView(APIView):
     """Reporte detallado de ventas (incluyendo los ítems comprados en cada factura)."""
     permission_classes = [IsAuthenticated]
 
@@ -67,8 +63,8 @@ class FacturaDetalleReporteView(APIView):
         try:
             # Delegamos al Core
             queryset = obtener_reporte_ventas_service(
-                start_date_str=request.query_params.get("fecha_inicio"), # Usar los mismos nombres que en ReporteventaView
-                end_date_str=request.query_params.get("end_date"),
+                start_date_str=request.query_params.get("fecha_inicio"),
+                end_date_str=request.query_params.get("fecha_fin"),
                 estado=request.query_params.get('estado'),
                 cliente_id=request.query_params.get('cliente_id')
             )

@@ -48,12 +48,22 @@ class NivelPrecio(models.Model):
         default=0.00,
         help_text="Porcentaje de descuento global para este nivel (ej: 15.00 para 15%)"
     )
+    monto_minimo_periodo = models.DecimalField(
+        max_digits=12,
+        decimal_places=2,
+        default=0.00,
+        help_text=(
+            "Monto mínimo comprado por un cliente en el período de evaluación "
+            "(ver `pricing_tier_service.PERIODO_EVALUACION_MESES`) para calificar "
+            "automáticamente a este nivel. 0 = nivel de entrada, sin mínimo."
+        ),
+    )
     activo = models.BooleanField(default=True)
 
     class Meta:
         verbose_name = "Nivel de Precio"
         verbose_name_plural = "Niveles de Precios"
-        ordering = ['nombre']
+        ordering = ['monto_minimo_periodo', 'nombre']
 
     def __str__(self):
         return f"{self.nombre} ({self.porcentaje_descuento}%)"
@@ -78,7 +88,14 @@ class ClienteB2B(models.Model):
     telefono_contacto = models.CharField(max_length=30, blank=True)
     direccion_fiscal = models.TextField(blank=True)
     nivel_precio = models.ForeignKey(NivelPrecio, on_delete=models.PROTECT, related_name='clientes_b2b', help_text="Categoría de precios asignada a este cliente.")
-    limite_credito = models.DecimalField(max_digits=12, decimal_places=2, default=0.00, help_text="Monto máximo de crédito otorgado.")
+    limite_credito = models.DecimalField(
+        max_digits=12, decimal_places=2, default=0.00,
+        help_text="Monto máximo de crédito otorgado. 0 = sin línea de crédito configurada (no se restringe el pedido).",
+    )
+    nivel_precio_actualizado_en = models.DateTimeField(
+        blank=True, null=True,
+        help_text="Última vez que el sistema subió automáticamente el nivel de precio por volumen de compra.",
+    )
     estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='pendiente')
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_actualizacion = models.DateTimeField(auto_now=True)

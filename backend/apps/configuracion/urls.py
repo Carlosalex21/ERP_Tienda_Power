@@ -5,9 +5,11 @@ from .api.views import (
     MonedaViewSet,
     TasaCambioViewSet,
     TasaCambioActualView,
+    ActualizarTasaBcvView,
     TaxStrategyView,
     TipoDocumentoViewSet,
     ConfiguracionEmpresaView,
+    ConfiguracionCorrelativoView,
 )
 
 router = DefaultRouter()
@@ -18,7 +20,9 @@ router.register(r"tasas-cambio", TasaCambioViewSet, basename="tasa-cambio")
 
 urlpatterns = [
     path("empresa/", ConfiguracionEmpresaView.as_view(), name="configuracion-empresa"),
+    path("correlativo/", ConfiguracionCorrelativoView.as_view(), name="configuracion-correlativo"),
     path("tax-strategy/", TaxStrategyView.as_view(), name="tax-strategy"),
     path("tasas-cambio/actual/", TasaCambioActualView.as_view(), name="tasas-cambio-actual"),
+    path("tasas-cambio/actualizar-bcv/", ActualizarTasaBcvView.as_view(), name="tasas-cambio-actualizar-bcv"),
     path("", include(router.urls)),
 ]
