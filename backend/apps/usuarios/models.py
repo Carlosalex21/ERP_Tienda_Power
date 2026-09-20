@@ -15,6 +15,15 @@ class Rol(models.Model):
     nombre = models.CharField(unique=True, max_length=50, verbose_name="Nombre del Rol")
     descripcion = models.TextField(blank=True, null=True, verbose_name="Descripción")
     activo = models.BooleanField(default=True, verbose_name="Activo")
+    # Códigos de módulo (ver `ERP_System_Persona/src/utils/modulosPanel.ts`,
+    # la lista canónica que también arma el menú lateral) que este rol NO
+    # debe ver en el panel. Antes no existía forma de personalizar el menú
+    # por rol -- un cajero veía exactamente las mismas opciones que un
+    # administrador, solo que el backend le bloqueaba la acción al
+    # intentarla. Es una lista simple (no un modelo aparte por
+    # rol×módulo) a propósito: un solo campo es más fácil de armar en el
+    # panel y de razonar que una tabla de asociación para ~25 módulos fijos.
+    modulos_ocultos = models.JSONField(default=list, blank=True, verbose_name="Módulos ocultos")
 
     class Meta:
         db_table = 'Rol'

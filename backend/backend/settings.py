@@ -92,6 +92,7 @@ REST_FRAMEWORK = {
         'anon': os.getenv('THROTTLE_ANON', '120/min'),
         'user': os.getenv('THROTTLE_USER', '1000/min'),
         'login': os.getenv('THROTTLE_LOGIN', '20/min'),
+        'demo_login': os.getenv('THROTTLE_DEMO_LOGIN', '10/min'),
         'catalogo': os.getenv('THROTTLE_CATALOGO', '300/min'),
         'password_reset': os.getenv('THROTTLE_PASSWORD_RESET', '5/min'),
     },
@@ -147,7 +148,11 @@ TENANT_APPS = [
     'apps.catalogo_publico',
     'apps.rrhh',
     'apps.reportes',
-    
+    'apps.restaurantes',
+    'apps.farmacia',
+    'apps.servicios',
+    'apps.contabilidad',
+
     # Si 'erp' y 'tienda' aún tienen modelos viejos, déjalos aquí temporalmente
     #'erp',
     #'tienda',
@@ -240,6 +245,24 @@ SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = 'Lax'
 CSRF_COOKIE_HTTPONLY = False
 CSRF_COOKIE_SAMESITE = 'Lax'
+
+# --- Seguridad detrás de un reverse proxy TLS (nginx) ---
+# En producción, nginx termina TLS y reenvía al contenedor en HTTP plano
+# por la red interna de Docker -- sin este header, `request.is_secure()`
+# siempre da False (Django solo ve la conexión interna en HTTP), lo que
+# rompe cualquier redirect o cookie que dependa de saber si la conexión
+# original del cliente fue HTTPS. Debe coincidir con el header que de
+# verdad manda nginx (`proxy_set_header X-Forwarded-Proto $scheme;`).
+SECURE_PROXY_SSL_HEADER = ('HTTP_X_FORWARDED_PROTO', 'https')
+# Apagados por defecto (dev sin HTTPS); se activan por env var una vez el
+# certificado esté funcionando. `SECURE_SSL_REDIRECT` se deja en False
+# incluso en producción porque nginx ya hace el redirect http->https --
+# activarlo también en Django podría producir un loop si el header de
+# arriba no llega a coincidir exactamente.
+SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False') == 'True'
+CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False') == 'True'
+SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '0'))
+SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'False') == 'True'
 
 # Cookies de autenticación JWT
 JWT_ACCESS_COOKIE_NAME = os.getenv('JWT_ACCESS_COOKIE_NAME', 'access_token')
@@ -339,28 +362,48 @@ WOOCOMMERCE_CONFIG = {
 # =========================================================
 # CACHÉ Redis
 # =========================================================
-REDIS_URL = os.getenv('REDIS_URL', 'redis://localhost:6379/1')
+REDIS_URL = os.getenv('REDIS_URL')
 
-CACHES = {
-    'default': {
-        'BACKEND': 'django.core.cache.backends.redis.RedisCache',
-        'LOCATION': REDIS_URL,
-        'KEY_PREFIX': 'erp_saas',
-        'TIMEOUT': int(os.getenv('CACHE_TIMEOUT', '300')),
-        # Sin esto, redis-py usa timeouts de conexión por defecto (varios
-        # segundos, y en Windows la resolución de 'localhost' puede tardar
-        # aún más). Si Redis está caído, cada get/set/throttle-check paga esa
-        # espera completa ANTES de fallar -- descubierto porque un simple
-        # guardado de configuración tardaba ~24s (6 invalidaciones de caché x
-        # ~4s cada una). El código ya está diseñado para degradar sin Redis
-        # (ver apps/core/cache_utils.py y apps/core/throttling.py); esto hace
-        # que esa degradación sea rápida (ms) en vez de lenta (segundos).
-        'OPTIONS': {
-            'socket_connect_timeout': float(os.getenv('REDIS_CONNECT_TIMEOUT', '0.05')),
-            'socket_timeout': float(os.getenv('REDIS_SOCKET_TIMEOUT', '0.05')),
+if REDIS_URL:
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.redis.RedisCache',
+            'LOCATION': REDIS_URL,
+            'KEY_PREFIX': 'erp_saas',
+            'TIMEOUT': int(os.getenv('CACHE_TIMEOUT', '300')),
+            # Sin esto, redis-py usa timeouts de conexión por defecto (varios
+            # segundos, y en Windows la resolución de 'localhost' puede tardar
+            # aún más). Si Redis está caído, cada get/set/throttle-check paga esa
+            # espera completa ANTES de fallar -- descubierto porque un simple
+            # guardado de configuración tardaba ~24s (6 invalidaciones de caché x
+            # ~4s cada una). El código ya está diseñado para degradar sin Redis
+            # (ver apps/core/cache_utils.py y apps/core/throttling.py); esto hace
+            # que esa degradación sea rápida (ms) en vez de lenta (segundos).
+            'OPTIONS': {
+                'socket_connect_timeout': float(os.getenv('REDIS_CONNECT_TIMEOUT', '0.05')),
+                'socket_timeout': float(os.getenv('REDIS_SOCKET_TIMEOUT', '0.05')),
+            },
         },
-    },
-}
+    }
+else:
+    # Sin `REDIS_URL` en el entorno (dev local sin Redis instalado, como esta
+    # máquina): antes esto caía al default 'redis://localhost:6379/1' e
+    # intentaba conectarse igual, pagando el timeout de conexión (arriba) en
+    # CADA operación de caché/throttle -- una sola request que toca varias
+    # claves cacheadas (tax_strategy, monedas, tasas, país del tenant...)
+    # sumaba cientos de ms/segundos de espera repetida solo para fallar.
+    # `LocMemCache` no necesita ningún servicio corriendo y nunca falla al
+    # conectar, así que es el default correcto cuando no se configuró Redis
+    # explícitamente. En producción SIEMPRE se define `REDIS_URL` (ver
+    # docker-compose/.env), así que este branch nunca se usa ahí -- el caché
+    # compartido entre workers sigue intacto.
+    CACHES = {
+        'default': {
+            'BACKEND': 'django.core.cache.backends.locmem.LocMemCache',
+            'KEY_PREFIX': 'erp_saas',
+            'TIMEOUT': int(os.getenv('CACHE_TIMEOUT', '300')),
+        },
+    }
 
 # TTLs específicos para distintos tipos de contenido cacheable
 CACHE_TTL = {

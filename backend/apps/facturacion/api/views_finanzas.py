@@ -16,7 +16,18 @@ class MetodoPagoViewSet(viewsets.ModelViewSet):
         instance.activo = False
         instance.save()
 
+# El registro real de un pago pasa por `pagos_service.procesar_pago_factura_service`
+# (ver `views_pagos.py`/`views_terminal.py`), que valida montos contra el
+# saldo de la factura, descuenta stock una sola vez, etc. -- el frontend
+# solo LEE de estos dos ViewSets (ver `facturacionService.ts`), nunca
+# escribe. Estando como `ModelViewSet` completo con solo `IsAuthenticated`,
+# cualquier empleado logueado podía crear una "Transaccionpago" con
+# `estado='exitoso'` fabricada (sin pasar dinero real) o inventar
+# devoluciones, sin ninguna validación de monto. Se dejan de solo lectura;
+# un futuro flujo de reembolsos debe tener su propio service validado, no
+# reabrir este CRUD crudo.
 class TransaccionpagoViewSet(viewsets.ModelViewSet):
+    http_method_names = ['get', 'head', 'options']
     queryset = Transaccionpago.objects.select_related('metodo_pago', 'factura').filter(activo=True).order_by("-fecha")
     serializer_class = TransaccionpagoSerializer
     permission_classes = [permissions.IsAuthenticated]
@@ -30,6 +41,7 @@ class TransaccionpagoByMetodo(APIView):
         return JsonResponse({"transacciones": serializer.data})
 
 class DevolucionViewSet(viewsets.ModelViewSet):
+    http_method_names = ['get', 'head', 'options']
     queryset = Devolucion.objects.filter(activo=True).order_by("-fecha_solicitud")
     serializer_class = DevolucionSerializer
     permission_classes = [permissions.IsAuthenticated]

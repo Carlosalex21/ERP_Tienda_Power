@@ -1,16 +1,18 @@
 import csv
 from django.http import HttpResponse, JsonResponse
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
 from http import HTTPStatus
 
+from apps.core.permissions import IsTenantAdmin
 from apps.reportes.models import Reportecliente
 from apps.reportes.api.serializers import ReporteclienteSerializer
 from apps.common.utils import generar_pdf, generar_excel
 
 class ReporteclienteView(APIView):
     """Exporta el reporte de clientes a JSON, PDF, Excel o CSV."""
-    permission_classes = [IsAuthenticated]
+    # Exportación masiva de las compras de TODOS los clientes -- antes
+    # cualquier empleado autenticado podía descargarla.
+    permission_classes = [IsTenantAdmin]
 
     def get(self, request):
         export_format = request.query_params.get('export', None)

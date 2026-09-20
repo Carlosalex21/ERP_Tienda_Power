@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{% include "contabilidad/reporte_base.css" %}</style>
+</head>
+<body>
+  <h1>Balance de Comprobación</h1>
+  <h2>{{ empresa.nombre }}{% if fecha_desde %} · {{ fecha_desde }} a {{ fecha_hasta }}{% elif fecha_hasta %} · hasta {{ fecha_hasta }}{% else %} · histórico completo{% endif %}</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Código</th>
+        <th>Cuenta</th>
+        <th class="num">Debe</th>
+        <th class="num">Haber</th>
+        <th class="num">Saldo</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for f in filas %}
+      <tr>
+        <td>{{ f.codigo }}</td>
+        <td>{{ f.nombre }}</td>
+        <td class="num">{{ f.debe }}</td>
+        <td class="num">{{ f.haber }}</td>
+        <td class="num">{{ f.saldo }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="total-row">
+        <td colspan="2">Totales</td>
+        <td class="num">{{ total_debe }}</td>
+        <td class="num">{{ total_haber }}</td>
+        <td class="num {% if cuadra %}cuadra-ok{% else %}cuadra-mal{% endif %}">{% if cuadra %}Cuadra{% else %}No cuadra{% endif %}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="footer">Generado el {{ fecha_generacion }} · {{ tenant_nombre }}</p>
+</body>
+</html>

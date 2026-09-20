@@ -24,6 +24,18 @@ class DashboardDataView(APIView):
     def get(self, request):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
-        
+
         data = obtener_metricas_dashboard(start_date, end_date, request.user) # Asegúrate que obtener_metricas_dashboard use select_related/prefetch_related internamente
+
+        # Métricas propias del vertical contador (no vende bienes físicos,
+        # las tarjetas de inventario/stock de arriba no le aplican) -- import
+        # local a propósito: `apps.reportes` es compartido por TODAS las
+        # verticales y no debe depender de que `apps.contabilidad` exista.
+        if getattr(request.tenant, 'tipo_negocio', None) == 'contador':
+            try:
+                from apps.contabilidad.services import obtener_metricas_dashboard_contador
+                data['contabilidad'] = obtener_metricas_dashboard_contador()
+            except Exception:
+                pass
+
         return Response(data)

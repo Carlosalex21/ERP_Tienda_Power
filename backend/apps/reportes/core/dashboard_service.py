@@ -6,7 +6,84 @@ from decimal import Decimal
 # Importamos modelos de otras apps
 from apps.facturacion.models import Factura, Detallefactura
 from apps.clientes.models import Cliente
-from apps.inventario.models import Producto
+from apps.inventario.models import Producto, Variacionproducto
+
+# Ventana histórica usada para estimar la velocidad de venta (unidades/día)
+# de cada producto, y a cuántos días de quiebre de stock se le da la voz de
+# alerta. 30 días evita que una promoción puntual de un solo día distorsione
+# la proyección; 7 días de umbral da tiempo real para reabastecer antes de
+# quedarse sin stock.
+DIAS_VENTANA_VELOCIDAD = 30
+DIAS_UMBRAL_ALERTA_QUIEBRE = 7
+
+
+def obtener_prediccion_quiebre_stock():
+    """
+    A diferencia de "Alertas de Stock Bajo" (umbral estático sobre la
+    cantidad actual), esto proyecta CUÁNTOS DÍAS le quedan a cada producto
+    antes de agotarse, según su propio ritmo de venta reciente -- un
+    producto con harto stock pero que se vende rápido puede quebrar antes
+    que uno con poco stock pero que casi no rota, y el umbral estático no
+    distingue esos dos casos.
+    """
+    hoy = date.today()
+    desde = hoy - timedelta(days=DIAS_VENTANA_VELOCIDAD - 1)
+    ventas_recientes = Detallefactura.objects.filter(
+        factura__fecha_operacion__date__range=[desde, hoy],
+    ).exclude(factura__estado__iexact='cancelada')
+
+    alertas = []
+
+    # Productos simples: el stock vive en `Producto.cantidad` y las ventas
+    # se registran con `variante` vacío (una venta de variante también deja
+    # `producto` seteado -- por eso se excluye explícitamente aquí, o un
+    # producto variable con variantes contaría sus ventas dos veces).
+    ventas_por_producto = {
+        v['producto_id']: v['cantidad_total']
+        for v in ventas_recientes.filter(variante__isnull=True)
+            .values('producto_id')
+            .annotate(cantidad_total=Coalesce(Sum('cantidad'), 0))
+    }
+    productos_simples = Producto.objects.filter(
+        activo=True, tipo='simple', cantidad__gt=0,
+    ).only('id', 'nombre', 'sku', 'cantidad')
+    for producto in productos_simples:
+        vendido = ventas_por_producto.get(producto.id, 0)
+        _agregar_si_en_riesgo(alertas, producto.nombre, producto.sku, producto.cantidad, vendido)
+
+    # Variantes de producto variable: el stock vive en `Variacionproducto.cantidad`.
+    ventas_por_variante = {
+        v['variante_id']: v['cantidad_total']
+        for v in ventas_recientes.filter(variante__isnull=False)
+            .values('variante_id')
+            .annotate(cantidad_total=Coalesce(Sum('cantidad'), 0))
+    }
+    variantes = Variacionproducto.objects.filter(
+        activo=True, producto__activo=True, cantidad__gt=0,
+    ).select_related('producto').only('id', 'nombre', 'sku', 'cantidad', 'producto__nombre')
+    for variante in variantes:
+        vendido = ventas_por_variante.get(variante.id, 0)
+        nombre_completo = f"{variante.producto.nombre} - {variante.nombre}" if variante.producto else variante.nombre
+        _agregar_si_en_riesgo(alertas, nombre_completo, variante.sku, variante.cantidad, vendido)
+
+    alertas.sort(key=lambda a: a['dias_restantes'])
+    return alertas
+
+
+def _agregar_si_en_riesgo(alertas, nombre, sku, cantidad_actual, unidades_vendidas_ventana):
+    if unidades_vendidas_ventana <= 0:
+        return
+    velocidad_diaria = unidades_vendidas_ventana / DIAS_VENTANA_VELOCIDAD
+    dias_restantes = cantidad_actual / velocidad_diaria
+    if dias_restantes > DIAS_UMBRAL_ALERTA_QUIEBRE:
+        return
+    alertas.append({
+        'nombre': nombre,
+        'sku': sku,
+        'cantidad': cantidad_actual,
+        'venta_diaria_promedio': round(velocidad_diaria, 2),
+        'dias_restantes': round(dias_restantes, 1),
+    })
 
 def obtener_metricas_dashboard(start_date_str, end_date_str, user):
     """
@@ -98,7 +175,9 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
     # tornillos (bajo stock a los 500) y electrodomésticos (bajo stock a
     # los 2). Sin `stock_minimo` asignado, se sigue usando el `10` general.
     UMBRAL_BAJO_STOCK_GENERAL = 10
-    bajo_stock_qs = Producto.objects.filter(activo=True).filter(
+    # `tipo='servicio'` no tiene stock real (siempre cantidad=0/None) -- sin
+    # excluirlo, CADA servicio aparecía como "bajo stock" en el dashboard.
+    bajo_stock_qs = Producto.objects.filter(activo=True).exclude(tipo='servicio').filter(
         Q(stock_minimo__isnull=False, cantidad__lt=F('stock_minimo')) |
         Q(stock_minimo__isnull=True, cantidad__lt=UMBRAL_BAJO_STOCK_GENERAL)
     ).order_by('cantidad')
@@ -131,6 +210,7 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
         'graficoVentas': grafico_ventas,
         'productosMasVendidos': productos_mas_vendidos,
         'productosBajoStock': bajo_stock,
+        'prediccionQuiebreStock': obtener_prediccion_quiebre_stock(),
         'infoGeneral': {
             'clientes': Cliente.objects.filter(activo=True).count(),
             'productos': Producto.objects.filter(activo=True).count(),

@@ -1,0 +1,13 @@
+@page { size: A4; margin: 1.5cm; }
+body { font-family: Helvetica, Arial, sans-serif; font-size: 10pt; color: #1e293b; }
+h1 { font-size: 16pt; margin: 0 0 2px 0; }
+h2 { font-size: 11pt; color: #64748b; font-weight: normal; margin: 0 0 14px 0; }
+h3 { font-size: 12pt; margin: 18px 0 6px 0; border-bottom: 2px solid #1e293b; padding-bottom: 4px; }
+table { width: 100%; border-collapse: collapse; margin-bottom: 10px; }
+th { text-align: left; background: #f1f5f9; font-size: 8.5pt; text-transform: uppercase; padding: 5px 6px; border-bottom: 1px solid #cbd5e1; }
+td { padding: 4px 6px; border-bottom: 1px solid #e2e8f0; font-size: 9.5pt; }
+.num { text-align: right; }
+.total-row td { font-weight: bold; border-top: 2px solid #1e293b; border-bottom: none; }
+.footer { margin-top: 20px; font-size: 8pt; color: #94a3b8; }
+.cuadra-ok { color: #059669; font-weight: bold; }
+.cuadra-mal { color: #dc2626; font-weight: bold; }

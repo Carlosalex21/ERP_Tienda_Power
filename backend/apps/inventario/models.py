@@ -108,6 +108,18 @@ class Producto(models.Model): #Listo
     almacen = models.ForeignKey(Almacen, on_delete=models.SET_NULL, blank=True, null=True)
     codigo_barras = models.CharField(unique=True, max_length=50, blank=True, null=True)
     disponible_online = models.BooleanField(blank=True, null=True)
+    # Insumo/materia prima de uso interno (ej. papas, zanahoria en un
+    # restaurante; un repuesto genérico en un taller): se compra y se
+    # descuenta como cualquier producto, pero NO es algo que se ofrezca
+    # directamente -- no debe aparecer en el selector de "agregar ítem" del
+    # POS/Mesas (`disponible_online` ya lo excluye del catálogo público, pero
+    # esa bandera no dice nada sobre si el propio personal debería poder
+    # "venderlo" tal cual desde el mostrador).
+    es_insumo = models.BooleanField(
+        default=False,
+        verbose_name="Es insumo interno",
+        help_text="Ítem de stock que no se ofrece directamente (ej. materia prima) -- se excluye de los selectores de venta.",
+    )
     descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
     configuracion_iva = models.ForeignKey("configuracion.ConfiguracionIva", models.DO_NOTHING, blank=True, null=True)
     # Moneda en la que está expresado `precio`. Antes no existía: el POS y el
@@ -131,6 +143,11 @@ class Producto(models.Model): #Listo
     TIPO_CHOICES = (
         ('simple', 'Simple'),
         ('variable', 'Variable'),
+        # Algo que se cobra pero no es un ítem físico de inventario (ej.
+        # "Servicio Técnico", "Mano de Obra", "Consulta") -- no tiene stock
+        # que descontar (ver `afectar_inventario_por_venta`, que lo salta) ni
+        # campos como almacén/código de barras/stock mínimo que no aplican.
+        ('servicio', 'Servicio'),
     )
     tipo = models.CharField(max_length=20, choices=TIPO_CHOICES, default='simple')
     # Antes "bajo stock" (dashboard) usaba un umbral fijo (`cantidad < 10`)

@@ -11,6 +11,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema
 
+from apps.core.permissions import IsTenantAdmin
 from apps.core.response import standard_response
 from apps.facturacion.models import CajaSesion, CajaSesionMonto, Transaccionpago
 from apps.facturacion.services.caja_service import (
@@ -90,7 +91,10 @@ class CerrarCajaView(APIView):
 
 class HistorialCajaView(APIView):
     """Lista los turnos de caja pasados (todos los usuarios) -- para que un admin audite cierres anteriores."""
-    permission_classes = [IsAuthenticated]
+    # El docstring ya decía "para que un admin audite" pero el permiso real
+    # era `IsAuthenticated`: cualquier empleado podía ver los cierres de
+    # caja (y sus diferencias de efectivo) de TODOS los demás.
+    permission_classes = [IsTenantAdmin]
 
     def get(self, request):
         qs = CajaSesion.objects.select_related('usuario').prefetch_related('montos__moneda').order_by('-fecha_apertura')[:100]
@@ -128,7 +132,10 @@ class CobrosReportView(APIView):
     Filtros opcionales: ``fecha_desde``, ``fecha_hasta`` (YYYY-MM-DD),
     ``banco_id``, ``metodo_pago_id``.
     """
-    permission_classes = [IsAuthenticated]
+    # Reporte financiero cruzando todos los cajeros/bancos del negocio --
+    # antes cualquier empleado autenticado podía verlo, igual que
+    # `HistorialCajaView`.
+    permission_classes = [IsTenantAdmin]
 
     def get(self, request):
         qs = Transaccionpago.objects.filter(activo=True, estado="exitoso").select_related(

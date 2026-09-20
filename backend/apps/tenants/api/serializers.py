@@ -98,9 +98,16 @@ class TenantRegistrationSerializer(serializers.Serializer):
         help_text="Solo letras minúsculas, números y guiones. Ej: 'mi-tienda'"
     )
     tipo_negocio = serializers.ChoiceField(
-        choices=[('retail', 'Retail'), ('b2b', 'B2B')],
+        choices=[
+            ('retail', 'Retail'),
+            ('b2b', 'B2B'),
+            ('restaurante', 'Restaurante / Bar'),
+            ('farmacia', 'Farmacia'),
+            ('servicios', 'Taller / Servicios'),
+            ('contador', 'Contador / Firma Contable'),
+        ],
         required=True,
-        help_text="Define el modelo de negocio principal del tenant."
+        help_text="Define el modelo de negocio principal del tenant.",
     )
     pais_codigo = serializers.ChoiceField(
         choices=[('VE', 'Venezuela'), ('CO', 'Colombia'), ('PE', 'Perú')],
@@ -111,6 +118,13 @@ class TenantRegistrationSerializer(serializers.Serializer):
         ),
     )
     plan_id = serializers.IntegerField(required=False, help_text="Opcional. ID del plan a contratar. Si no se provee, se asigna un plan de prueba.")
+    cantidad_mesas = serializers.IntegerField(
+        required=False,
+        default=6,
+        min_value=1,
+        max_value=200,
+        help_text="Solo aplica si tipo_negocio='restaurante': cantidad de mesas a sembrar (el dueño puede agregar/quitar después desde el panel).",
+    )
 
     def validate_subdomain(self, value):
         """Verifica que el subdominio no sea una palabra reservada."""

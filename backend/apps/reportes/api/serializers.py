@@ -13,7 +13,9 @@ class DashboardResponseSerializer(serializers.Serializer):
     graficoVentas = serializers.DictField()
     productosMasVendidos = serializers.ListField()
     productosBajoStock = serializers.ListField()
+    prediccionQuiebreStock = serializers.ListField()
     infoGeneral = serializers.DictField()
+    contabilidad = serializers.DictField(required=False)
 
 class VentaReporteSerializer(serializers.Serializer):
     """Para reportes de listados de ventas."""

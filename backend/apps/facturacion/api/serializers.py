@@ -125,12 +125,12 @@ class FacturaSerializer(serializers.ModelSerializer):
             "detalles",
             "detalles_para_crear",
         )
-
-    def get_vendedor_nombre(self, obj):
-        persona = obj.vendedor or obj.usuario
-        if not persona:
-            return None
-        return persona.get_full_name() or persona.username
+        # OJO: antes este tuple vivía dentro de `get_vendedor_nombre`,
+        # después de un `return` -- código muerto que nunca llegaba a
+        # `Meta`. Sin él, un cliente podía mandar en el PATCH/PUT sus
+        # propios `total`, `subtotal`, `correlativo` o `numero_control`
+        # (el número de control SENIAT) y quedaban grabados tal cual, sin
+        # que `recalcular_y_guardar_factura` los corrigiera.
         read_only_fields = (
             "subtotal",
             "base_imponible",
@@ -145,6 +145,12 @@ class FacturaSerializer(serializers.ModelSerializer):
             "correlativo",
             "numero_control",
         )
+
+    def get_vendedor_nombre(self, obj):
+        persona = obj.vendedor or obj.usuario
+        if not persona:
+            return None
+        return persona.get_full_name() or persona.username
 
     def create(self, validated_data):
         detalles_data = validated_data.pop("detalles", [])
@@ -162,6 +168,16 @@ class FacturaSerializer(serializers.ModelSerializer):
 
     def update(self, instance, validated_data):
         detalles_data = validated_data.pop("detalles", None)
+        # Un pedido del catálogo/B2B llega con `pendiente_de_aprobacion=True`
+        # (ver `crear_orden_desde_pedido_publico`) para que `Factura.save()`
+        # no le asigne correlativo/número de control hasta que el admin lo
+        # confirme -- podía ser rechazado. En cuanto el admin toma CUALQUIER
+        # decisión sobre él (confirmar el pago o anularlo), ya dejó de estar
+        # "pendiente de aprobación": si lo confirma, `save()` recién aquí le
+        # asigna su numeración fiscal (nunca antes, mientras podía rechazarse).
+        nuevo_estado = validated_data.get("estado")
+        if instance.pendiente_de_aprobacion and nuevo_estado and nuevo_estado != "pendiente":
+            instance.pendiente_de_aprobacion = False
         instance = super().update(instance, validated_data)
         if detalles_data is not None:
             instance.detalles.all().delete()

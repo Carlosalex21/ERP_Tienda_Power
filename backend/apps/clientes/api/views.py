@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from drf_spectacular.utils import extend_schema
 
-from apps.core.permissions import IsTenantAdmin
+from apps.core.permissions import IsTenantAdmin, IsAdminOrVendedor
 from apps.core.response import standard_response
 from apps.clientes.models import Cliente
 from apps.clientes.services.cliente_bulk_service import procesar_carga_masiva_clientes, ClienteBulkUploadError
@@ -22,7 +22,9 @@ class ClienteListCreateView(generics.ListCreateAPIView):
     """
     queryset = Cliente.objects.filter(activo=True)
     serializer_class = ClienteSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    # PII completo del cliente (email, teléfono, dirección, cédula/RIF) --
+    # antes cualquier empleado autenticado (incl. RRHH) podía listar/crear.
+    permission_classes = [IsAdminOrVendedor]
     pagination_class = None
 
 class ClienteRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
@@ -31,7 +33,7 @@ class ClienteRetrieveUpdateDestroyView(generics.RetrieveUpdateDestroyAPIView):
     """
     queryset = Cliente.objects.filter(activo=True)
     serializer_class = ClienteSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    permission_classes = [IsAdminOrVendedor]
 
     def perform_destroy(self, instance):
         # Un cliente puede tener facturas asociadas (`Factura.cliente`) --

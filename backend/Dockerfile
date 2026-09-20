@@ -1,48 +1,77 @@
-# Usar una imagen base oficial y estable de Python
-FROM python:3.11-slim
+# syntax=docker/dockerfile:1
 
-# Instala Nginx, Supervisor y las dependencias de WeasyPrint
-RUN echo "Forzando reconstrucción v5" && apt-get update && apt-get install -y \
-    nginx \
-    supervisor \
+# ---------------------------------------------------------------------------
+# Etapa 1: builder -- instala dependencias Python (algunas necesitan
+# compilar contra headers de sistema que NO deben quedar en la imagen final).
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS builder
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1
+
+WORKDIR /app
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    build-essential \
+    libpq-dev \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copiar solo requirements primero: si el código cambia pero las
+# dependencias no, Docker reusa esta capa entera en el siguiente build.
+COPY requirements.txt .
+RUN pip install --user --no-cache-dir -r requirements.txt
+
+# ---------------------------------------------------------------------------
+# Etapa 2: runtime -- imagen final, sin compiladores ni headers de build.
+# ---------------------------------------------------------------------------
+FROM python:3.12-slim AS runtime
+
+ENV PYTHONDONTWRITEBYTECODE=1 \
+    PYTHONUNBUFFERED=1 \
+    PATH=/home/django/.local/bin:$PATH
+
+WORKDIR /app
+
+# Librerías de sistema en runtime:
+#   - libpq5: cliente Postgres (psycopg2-binary las trae empaquetadas, pero
+#     libpq5 asegura compatibilidad si el wheel las busca dinámicamente).
+#   - libpango/libcairo/libgdk-pixbuf/shared-mime-info: requeridas por
+#     WeasyPrint para renderizar los PDFs de factura.
+#   - curl: usado por el HEALTHCHECK.
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    libpq5 \
     libpango-1.0-0 \
     libpangocairo-1.0-0 \
     libgdk-pixbuf-2.0-0 \
-    libffi-dev \
     libcairo2 \
-    && rm -rf /var/lib/apt/lists/*
+    shared-mime-info \
+    fonts-liberation \
+    curl \
+    && rm -rf /var/lib/apt/lists/* \
+    && useradd --create-home --uid 1000 django
 
-# Establece variables de entorno para Python
-ENV PYTHONDONTWRITEBYTECODE 1
-ENV PYTHONUNBUFFERED 1
+COPY --from=builder --chown=django:django /root/.local /home/django/.local
+COPY --chown=django:django . .
 
-# Establece el directorio de trabajo dentro del contenedor
-WORKDIR /app
+RUN mkdir -p /app/staticfiles /app/media && chown -R django:django /app/staticfiles /app/media
 
-# Copia el archivo de requerimientos e instala los paquetes de Python
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+USER django
 
-# Copia el resto del código de la aplicación al contenedor
-COPY . .
+EXPOSE 8000
 
-# Copia los archivos de configuración y el entrypoint
-COPY nginx.conf /etc/nginx/conf.d/default.conf
-COPY supervisord.conf /etc/supervisor/conf.d/supervisord.conf
-COPY entrypoint.sh /entrypoint.sh
-RUN chmod +x /entrypoint.sh
+# `/admin/login/` existe tanto en `urls_public` como en `urls_tenants` (ver
+# `backend/urls_public.py` / `urls_tenants.py`) y responde 200 sin sesión,
+# así que el healthcheck funciona sin importar qué esquema resuelva
+# django-tenants para el Host `127.0.0.1` que usa curl desde dentro del
+# contenedor (no coincide con ningún dominio de tenant real).
+HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
+    CMD curl -fsS http://127.0.0.1:8000/admin/login/ -o /dev/null || exit 1
 
-# Crea la carpeta para los archivos media y asigna permisos
-RUN mkdir -p /app/media && chown -R www-data:www-data /app/media
-
-# AÑADE ESTAS LÍNEAS para crear el directorio de logs
-RUN mkdir -p /app/logs && chown -R www-data:www-data /app/logs
-
-# Recolecta estáticos (esto sí se puede hacer durante el build)
-RUN python manage.py collectstatic --noinput
-
-# Expone el puerto 80 (para Nginx)
-EXPOSE 80
-
-# El comando final ahora es el entrypoint
-CMD ["/entrypoint.sh"]
+# Invocado con `sh` explícito (en vez de depender del bit ejecutable del
+# archivo, que Windows/git no preservan de forma confiable en el contexto
+# de build).
+ENTRYPOINT ["sh", "/app/docker-entrypoint.sh"]
+# Número de workers Gunicorn configurable por env var (`GUNICORN_WORKERS`)
+# vía el propio entrypoint -- ver `docker-entrypoint.sh`.
+CMD ["gunicorn"]

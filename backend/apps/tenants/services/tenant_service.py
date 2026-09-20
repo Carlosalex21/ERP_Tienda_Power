@@ -46,6 +46,8 @@ def _seed_tenant_defaults(
     last_name: str,
     nombre_empresa: str,
     pais_codigo: str,
+    tipo_negocio: str = 'retail',
+    cantidad_mesas: int = 6,
 ) -> None:
     """
     Siembra los datos mínimos dentro del esquema del tenant.
@@ -147,6 +149,16 @@ def _seed_tenant_defaults(
         defaults={"prefijo": "F-", "current_number": 0, "number_length": 3},
     )
 
+    # 8. Mesas para un tenant de restaurante -- la cantidad la indica el
+    # propio dueño en el registro (cada local tiene un número distinto de
+    # mesas); se siembran ya numeradas para que el módulo no arranque vacío,
+    # pero puede agregar/quitar/renombrar mesas después desde el panel.
+    if tipo_negocio == 'restaurante':
+        from apps.restaurantes.models import Mesa
+
+        for numero in range(1, max(1, cantidad_mesas) + 1):
+            Mesa.objects.get_or_create(numero=f"Mesa {numero}")
+
 
 class TenantService:
     """Crea y aprovisiona inquilinos de forma atómica."""
@@ -165,6 +177,7 @@ class TenantService:
         pais_codigo: str = "VE",
         plan_id: int | None = None,
         trial_days: int = 14,
+        cantidad_mesas: int = 6,
     ) -> Client:
         """
         Registra un nuevo inquilino completo.
@@ -177,12 +190,14 @@ class TenantService:
             last_name: Apellido.
             nombre_empresa: Nombre de la empresa.
             subdomain: Subdominio único (schema_name y dominio).
-            tipo_negocio: 'retail' | 'b2b'.
+            tipo_negocio: 'retail' | 'b2b' | 'restaurante' | 'farmacia' | 'servicios'.
             pais_codigo: País de operación ('VE' | 'CO' | 'PE'), elegido como
                 primer paso del registro. Condiciona la moneda base y las
                 tasas de IVA/IGV sembradas para el tenant.
             plan_id: ID de plan opcional.
             trial_days: Días de prueba cuando no se provee plan.
+            cantidad_mesas: Solo aplica si tipo_negocio='restaurante' -- cantidad
+                de mesas que el dueño indicó tener, sembradas de una vez.
 
         Returns:
             Client: El inquilino creado y aprovisionado.
@@ -258,6 +273,8 @@ class TenantService:
                 last_name=last_name,
                 nombre_empresa=nombre_empresa,
                 pais_codigo=pais_codigo,
+                tipo_negocio=tipo_negocio,
+                cantidad_mesas=cantidad_mesas,
             )
 
         logger.info("Tenant %s creado y aprovisionado.", tenant.schema_name)

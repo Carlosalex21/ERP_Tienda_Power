@@ -22,8 +22,10 @@ class FacturaViewSet(viewsets.ModelViewSet):
     serializer_class = FacturaSerializer
     # Permite `?estado=pendiente` -- usado por el panel de Pedidos para no
     # traer/filtrar en el cliente todo el historial de facturas solo para
-    # contar cuántas vienen del catálogo público sin confirmar.
-    filterset_fields = ['estado']
+    # contar cuántas vienen del catálogo público sin confirmar. `?cliente=`
+    # se usa para el historial de facturas de un cliente puntual (ej. las
+    # facturas de honorarios de una EmpresaContable, ver `apps.contabilidad`).
+    filterset_fields = ['estado', 'cliente']
 
     def get_permissions(self):
         """

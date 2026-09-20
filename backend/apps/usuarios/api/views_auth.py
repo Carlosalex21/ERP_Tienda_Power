@@ -17,6 +17,14 @@ from apps.usuarios.services.login_attempt_service import (
 )
 from .serializers import MyTokenObtainPairSerializer, UserMeSerializer
 
+# Tenant y usuario del demo público enlazado desde la landing ("Probar demo
+# en vivo") -- fijos a propósito (nunca vienen del request) para que
+# `DemoAutoLoginView` no se pueda convertir en un bypass de autenticación
+# para un tenant real. Deben coincidir con lo que siembra
+# `apps.tenants.management.commands.seed_demo_tenant`.
+DEMO_TENANT_SCHEMA = "demo"
+DEMO_USERNAME = "demo"
+
 
 class IsAdmin(BasePermission):
     """Permite solo a usuarios con rol 'Administrador'."""
@@ -98,6 +106,65 @@ class CustomTokenObtainPairView(TokenObtainPairView):
             return User.objects.get(username=username)
         except User.DoesNotExist:
             return None
+
+
+class DemoAutoLoginView(APIView):
+    """
+    Emite un access/refresh token para el usuario demo público, sin
+    contraseña -- pensado para el botón "Probar demo en vivo" de la landing.
+
+    Solo funciona para el tenant/usuario fijos de arriba: no acepta ningún
+    dato del request que determine a quién loguea, así que no sirve como
+    bypass de login para un tenant real. El schema del tenant demo se activa
+    explícitamente porque este endpoint se llama desde el dominio raíz (la
+    landing), que resuelve al esquema público -- ahí no existe el usuario
+    demo, que vive en su propio esquema de tenant.
+    """
+
+    permission_classes = [AllowAny]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "demo_login"
+
+    def post(self, request, *args, **kwargs):
+        from django.contrib.auth import get_user_model
+        from django_tenants.utils import schema_context
+        from apps.tenants.models import Client
+
+        try:
+            tenant = Client.objects.get(schema_name=DEMO_TENANT_SCHEMA)
+        except Client.DoesNotExist:
+            return error_response(
+                [{"code": "demo_unavailable", "detail": "La demo no está disponible en este momento.", "field": None}],
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        dominio = tenant.domains.filter(is_primary=True).first()
+        if dominio is None:
+            return error_response(
+                [{"code": "demo_unavailable", "detail": "La demo no está disponible en este momento.", "field": None}],
+                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            )
+
+        with schema_context(DEMO_TENANT_SCHEMA):
+            User = get_user_model()
+            try:
+                user = User.objects.get(username=DEMO_USERNAME, is_active=True)
+            except User.DoesNotExist:
+                return error_response(
+                    [{"code": "demo_unavailable", "detail": "La demo no está disponible en este momento.", "field": None}],
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                )
+            # Reutiliza el mismo serializer del login normal para que el
+            # token demo lleve exactamente los mismos claims (rol, sucursal,
+            # schema_name) que uno emitido con contraseña -- así el panel no
+            # necesita ninguna rama de código especial para la sesión demo.
+            token = MyTokenObtainPairSerializer.get_token(user)
+
+        return standard_response(data={
+            "access": str(token.access_token),
+            "refresh": str(token),
+            "tenant_domain": dominio.domain,
+        })
 
 
 class UserMeView(APIView):

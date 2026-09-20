@@ -5,6 +5,7 @@ from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated, AllowAny, IsAdminUser
 from django.shortcuts import get_object_or_404
 from django.conf import settings
+from django.db import models
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
@@ -47,11 +48,18 @@ class PlanViewSet(viewsets.ModelViewSet):
 
     def get_queryset(self):
         """
-        Para la acción 'list', solo muestra los planes activos.
+        Para la acción 'list', solo muestra los planes activos -- y si el
+        visitante ya sabe para qué tipo de negocio está mirando planes
+        (`?tipo_negocio=contador`), solo los que aplican a ese tipo (más los
+        que aplican a todos, `tipos_negocio` vacío).
         Para otras acciones (admin), muestra todos.
         """
         if self.action == 'list':
-            return self.queryset.filter(activo=True)
+            qs = self.queryset.filter(activo=True)
+            tipo_negocio = self.request.query_params.get('tipo_negocio')
+            if tipo_negocio:
+                qs = qs.filter(models.Q(tipos_negocio=[]) | models.Q(tipos_negocio__contains=[tipo_negocio]))
+            return qs
         return self.queryset
 
 class PlatformClientViewSet(viewsets.ReadOnlyModelViewSet):
@@ -104,7 +112,8 @@ class TenantRegistrationView(APIView):
                 last_name=data['last_name'], nombre_empresa=data['nombre_empresa'], tipo_negocio=data['tipo_negocio'],
                 subdomain=data['subdomain'],
                 pais_codigo=data['pais_codigo'],
-                plan_id=data.get('plan_id')
+                plan_id=data.get('plan_id'),
+                cantidad_mesas=data.get('cantidad_mesas', 6),
             )
         except TenantCreationError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)

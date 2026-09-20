@@ -34,6 +34,10 @@ urlpatterns = [
     path('api/v1/facturacion/', include('apps.facturacion.urls')),
     path('api/v1/inventario/', include('apps.inventario.urls')),
     path('api/v1/rrhh/', include('apps.rrhh.urls')),
+    path('api/v1/restaurantes/', include('apps.restaurantes.urls')),
+    path('api/v1/farmacia/', include('apps.farmacia.urls')),
+    path('api/v1/servicios/', include('apps.servicios.urls')),
+    path('api/v1/contabilidad/', include('apps.contabilidad.urls')),
     path('api/v1/reportes/', include('apps.reportes.urls')),
     # Endpoint para que el frontend obtenga el perfil del tenant actual
     path('api/v1/tenants/profile/', TenantProfileView.as_view(), name='tenant-profile'),

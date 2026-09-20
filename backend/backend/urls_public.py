@@ -8,6 +8,7 @@ from rest_framework_simplejwt.views import (
 )
 
 from apps.tenants.api.views_auth import PublicUserMeView
+from apps.usuarios.api.views_auth import DemoAutoLoginView
 
 urlpatterns = [
     path('admin/', admin.site.urls),
@@ -24,4 +25,7 @@ urlpatterns = [
     path('api/v1/auth/token/', TokenObtainPairView.as_view(), name='token_obtain_pair_public'),
     path('api/v1/auth/me/', PublicUserMeView.as_view(), name='user_me_public'),
     path('api/v1/auth/token/refresh/', TokenRefreshView.as_view(), name='token_refresh_public'),
+
+    # Login sin contraseña para el tenant demo público (ver DemoAutoLoginView).
+    path('api/v1/demo/login/', DemoAutoLoginView.as_view(), name='demo_auto_login'),
 ]

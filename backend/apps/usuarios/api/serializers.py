@@ -20,11 +20,19 @@ from ..models import Rol, UserMetadata
 
 
 class RolSerializer(serializers.ModelSerializer):
-    """Rol del tenant, para poblar selects (ej. al invitar un empleado)."""
+    """
+    Rol del tenant, para poblar selects (ej. al invitar un empleado) y para
+    la pantalla de "Permisos por Rol" (`modulos_ocultos`, ver `RolViewSet`).
+    """
 
     class Meta:
         model = Rol
-        fields = ("id", "codigo", "nombre", "descripcion", "activo")
+        fields = ("id", "codigo", "nombre", "descripcion", "activo", "modulos_ocultos")
+        # `codigo` es el identificador estable que compara todo el sistema
+        # de permisos (ver `apps.core.permissions.codigo_rol`) -- dejarlo
+        # editable desde este mismo endpoint (ahora que `RolViewSet` acepta
+        # PATCH para `modulos_ocultos`) podría desincronizarlo en silencio.
+        read_only_fields = ("codigo", "nombre", "descripcion", "activo")
 
 
 def _tenant_schema() -> str | None:
@@ -140,10 +148,21 @@ class UserMeSerializer(serializers.ModelSerializer):
     first_name = serializers.CharField(source="user.first_name", read_only=True)
     last_name = serializers.CharField(source="user.last_name", read_only=True)
     rol = serializers.CharField(source="rol.nombre", read_only=True, allow_null=True)
+    rol_codigo = serializers.CharField(source="rol.codigo", read_only=True, allow_null=True)
     sucursal = serializers.CharField(
         source="sucursal.nombre", read_only=True, allow_null=True
     )
+    # Módulos que el panel debe ocultarle a ESTE usuario según su rol (ver
+    # `Rol.modulos_ocultos` y la pantalla de "Permisos por Rol"). Se calcula
+    # aquí (no en un endpoint aparte) porque cualquier empleado ya puede
+    # consultar `/auth/me/` -- así ve solo lo que le toca A ÉL, sin
+    # necesitar el acceso admin-only que sí exige `RolViewSet` para listar
+    # TODOS los roles.
+    modulos_ocultos = serializers.SerializerMethodField()
+
+    def get_modulos_ocultos(self, obj) -> list[str]:
+        return obj.rol.modulos_ocultos if obj.rol else []
 
     class Meta:
         model = UserMetadata
-        fields = ("id", "email", "first_name", "last_name", "rol", "sucursal")
+        fields = ("id", "email", "first_name", "last_name", "rol", "rol_codigo", "sucursal", "modulos_ocultos")

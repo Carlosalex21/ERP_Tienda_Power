@@ -41,8 +41,16 @@ class UserManagementViewSet(viewsets.ModelViewSet):
             new_user.set_password(password)
         new_user.save()
 
-        # Crear el UserMetadata y asociarlo
-        UserMetadata.objects.create(user=new_user, **validated_data)
+        # Crear el UserMetadata y asociarlo. Hay que asignar `serializer.instance`
+        # a mano -- `ModelViewSet.create()` (DRF) llama a `serializer.data`
+        # DESPUÉS de este método para armar la respuesta, y sin `instance`
+        # cae a representar `validated_data` como si fuera el objeto (un
+        # dict plano). Como arriba ya se hizo `validated_data.pop('user')`,
+        # ese dict ya no tiene la clave `user` que el campo `email` (entre
+        # otros, `source='user.email'`) necesita para leerse -- reventaba
+        # con `KeyError: 'user'` en CADA invitación exitosa (el usuario SÍ
+        # quedaba creado, pero la respuesta nunca llegaba a devolverse).
+        serializer.instance = UserMetadata.objects.create(user=new_user, **validated_data)
 
     @transaction.atomic
     def perform_update(self, serializer):

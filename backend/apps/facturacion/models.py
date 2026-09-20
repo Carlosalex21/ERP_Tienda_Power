@@ -97,6 +97,19 @@ class Factura(models.Model):
     activo = models.BooleanField(default=True)
     nombre_cliente_pendiente = models.CharField(max_length=100, blank=True, null=True)
     comentario_pendiente = models.TextField(blank=True, null=True)
+    # Un pedido del catálogo público (o B2B) llega en estado 'pendiente' igual
+    # que una venta a crédito del POS ("pagar luego"), pero son cosas muy
+    # distintas: la venta a crédito ya es una transacción confirmada que solo
+    # espera el cobro, mientras que este pedido todavía puede ser RECHAZADO
+    # por el admin. Sin esta bandera, `save()` no podía distinguir ambos
+    # casos y le asignaba correlativo/número de control al pedido apenas
+    # llegaba -- antes incluso de que el admin lo confirmara -- lo que
+    # "quemaba" numeración fiscal en pedidos que podían terminar rechazados.
+    pendiente_de_aprobacion = models.BooleanField(
+        default=False,
+        verbose_name="Pendiente de aprobación",
+        help_text="True si es un pedido (catálogo/B2B) que todavía no ha sido confirmado por el admin: no debe recibir correlativo ni número de control hasta que se apruebe.",
+    )
 
     class Meta:
         db_table = 'Factura'
@@ -120,7 +133,7 @@ class Factura(models.Model):
         # El número de factura y el número de control se generan de forma
         # atómica (SELECT ... FOR UPDATE) para evitar condiciones de carrera
         # al emitir la factura, ya sea en estado 'pagado' o 'pendiente'.
-        if not self.correlativo and self.estado in ['pagado', 'pendiente']:
+        if not self.correlativo and self.estado in ['pagado', 'pendiente'] and not self.pendiente_de_aprobacion:
             try:
                 self.correlativo = obtener_y_actualizar_correlativo()
             except Exception as e:
@@ -132,7 +145,7 @@ class Factura(models.Model):
                 )
 
         # Número de control SENIAT (se genera junto al correlativo).
-        if not self.numero_control and self.estado in ['pagado', 'pendiente']:
+        if not self.numero_control and self.estado in ['pagado', 'pendiente'] and not self.pendiente_de_aprobacion:
             try:
                 self.numero_control = obtener_y_actualizar_numero_control()
             except Exception as e:

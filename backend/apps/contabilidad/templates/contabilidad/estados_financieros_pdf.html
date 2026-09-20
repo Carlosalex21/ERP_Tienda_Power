@@ -1,0 +1,52 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{% include "contabilidad/reporte_base.css" %}</style>
+</head>
+<body>
+  <h1>Estados Financieros</h1>
+  <h2>{{ empresa.nombre }}{% if fecha_desde %} · {{ fecha_desde }} a {{ fecha_hasta }}{% elif fecha_hasta %} · hasta {{ fecha_hasta }}{% else %} · histórico completo{% endif %}</h2>
+
+  <h3>Balance General</h3>
+  <table>
+    <thead><tr><th>Cuenta</th><th class="num">Saldo</th></tr></thead>
+    <tbody>
+      <tr><td colspan="2"><strong>ACTIVO</strong></td></tr>
+      {% for f in bg.activo %}<tr><td>{{ f.nombre }}</td><td class="num">{{ f.saldo }}</td></tr>{% endfor %}
+      <tr class="total-row"><td>Total Activo</td><td class="num">{{ bg.total_activo }}</td></tr>
+
+      <tr><td colspan="2"><strong>PASIVO</strong></td></tr>
+      {% for f in bg.pasivo %}<tr><td>{{ f.nombre }}</td><td class="num">{{ f.saldo }}</td></tr>{% endfor %}
+      <tr class="total-row"><td>Total Pasivo</td><td class="num">{{ bg.total_pasivo }}</td></tr>
+
+      <tr><td colspan="2"><strong>PATRIMONIO</strong></td></tr>
+      {% for f in bg.patrimonio %}<tr><td>{{ f.nombre }}</td><td class="num">{{ f.saldo }}</td></tr>{% endfor %}
+      <tr class="total-row"><td>Total Patrimonio</td><td class="num">{{ bg.total_patrimonio }}</td></tr>
+      <tr class="total-row"><td>Utilidad del período</td><td class="num">{{ bg.utilidad_periodo }}</td></tr>
+      <tr><td>Balance</td><td class="num {% if bg.cuadra %}cuadra-ok{% else %}cuadra-mal{% endif %}">{% if bg.cuadra %}Cuadra{% else %}No cuadra{% endif %}</td></tr>
+    </tbody>
+  </table>
+
+  <h3>Estado de Resultados</h3>
+  <table>
+    <thead><tr><th>Cuenta</th><th class="num">Saldo</th></tr></thead>
+    <tbody>
+      <tr><td colspan="2"><strong>INGRESOS</strong></td></tr>
+      {% for f in er.ingresos %}<tr><td>{{ f.nombre }}</td><td class="num">{{ f.saldo }}</td></tr>{% endfor %}
+      <tr class="total-row"><td>Total Ingresos</td><td class="num">{{ er.total_ingresos }}</td></tr>
+
+      <tr><td colspan="2"><strong>COSTOS</strong></td></tr>
+      {% for f in er.costos %}<tr><td>{{ f.nombre }}</td><td class="num">{{ f.saldo }}</td></tr>{% endfor %}
+      <tr class="total-row"><td>Total Costos</td><td class="num">{{ er.total_costos }}</td></tr>
+
+      <tr><td colspan="2"><strong>GASTOS</strong></td></tr>
+      {% for f in er.gastos %}<tr><td>{{ f.nombre }}</td><td class="num">{{ f.saldo }}</td></tr>{% endfor %}
+      <tr class="total-row"><td>Total Gastos</td><td class="num">{{ er.total_gastos }}</td></tr>
+      <tr class="total-row"><td>Utilidad del Período</td><td class="num">{{ er.utilidad_periodo }}</td></tr>
+    </tbody>
+  </table>
+
+  <p class="footer">Generado el {{ fecha_generacion }} · {{ tenant_nombre }}</p>
+</body>
+</html>

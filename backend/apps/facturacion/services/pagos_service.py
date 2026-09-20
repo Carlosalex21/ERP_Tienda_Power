@@ -22,6 +22,11 @@ def afectar_inventario_por_venta(factura):
     """
     detalles = Detallefactura.objects.select_related('producto', 'variante').filter(factura=factura)
     for detalle in detalles:
+        # Un producto tipo='servicio' (ej. "Servicio Técnico") no tiene stock
+        # que descontar -- venderlo no debe fallar con "stock insuficiente"
+        # solo porque nunca tuvo cantidad cargada.
+        if detalle.variante is None and detalle.producto is not None and detalle.producto.tipo == 'servicio':
+            continue
         # Determinamos si vendimos una variante específica o el producto base
         item_vendido = detalle.variante if detalle.variante else detalle.producto
         reducir_stock_item(item_vendido, detalle.cantidad)
@@ -101,6 +106,11 @@ def procesar_pago_factura_service(factura_id, pagos, estado_override, datos_adic
         factura.estado = "pendiente"
         factura.nombre_cliente_pendiente = datos_adicionales.get("nombre_cliente", "")
         factura.comentario_pendiente = datos_adicionales.get("comentario", "")
+        # Si esto es un pedido del catálogo/B2B que llegó con
+        # `pendiente_de_aprobacion=True` y el admin lo está procesando aquí
+        # en vez de por "Confirmar pago" en Pedidos, ya tomó una decisión
+        # real sobre él -- debe dejar de bloquear su correlativo.
+        factura.pendiente_de_aprobacion = False
         factura.save()
         return factura, []
 
@@ -177,7 +187,27 @@ def procesar_pago_factura_service(factura_id, pagos, estado_override, datos_adic
         factura.estado = "pendiente"
         factura.condicion_pago = "credito"
 
+    # Idem que en la rama "pagar luego" de arriba: registrar un pago real
+    # (aunque sea un abono parcial) es una decisión del admin sobre este
+    # pedido -- ya no debe seguir bloqueado esperando aprobación.
+    factura.pendiente_de_aprobacion = False
     factura.save()
+
+    if factura.estado == "pagado":
+        # Asiento contable automático -- OPCIONAL y completamente aislado:
+        # solo hace algo si el tenant configuró una empresa contable propia
+        # (ver apps.contabilidad.services.generar_asiento_automatico_venta,
+        # que se traga cualquier error en silencio). Import local a
+        # propósito: apps.facturacion es código compartido por TODAS las
+        # verticales y no debe depender de que apps.contabilidad exista ni
+        # esté instalada; este try/except es una segunda red de seguridad
+        # además de la que ya tiene esa función, para que un pago que YA SE
+        # PROCESÓ jamás pueda fallar por esto.
+        try:
+            from apps.contabilidad.services import generar_asiento_automatico_venta
+            generar_asiento_automatico_venta(factura)
+        except Exception:
+            pass
 
     return factura, transacciones
 

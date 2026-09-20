@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>{% include "contabilidad/reporte_base.css" %}</style>
+</head>
+<body>
+  <h1>Libro Mayor</h1>
+  <h2>{{ empresa.nombre }} · {{ cuenta.codigo }} - {{ cuenta.nombre }}{% if fecha_desde %} · {{ fecha_desde }} a {{ fecha_hasta }}{% elif fecha_hasta %} · hasta {{ fecha_hasta }}{% endif %}</h2>
+
+  <table>
+    <thead>
+      <tr>
+        <th>Fecha</th>
+        <th>Asiento</th>
+        <th>Descripción</th>
+        <th class="num">Debe</th>
+        <th class="num">Haber</th>
+        <th class="num">Saldo</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for m in movimientos %}
+      <tr>
+        <td>{{ m.fecha }}</td>
+        <td>#{{ m.asiento_numero }}</td>
+        <td>{{ m.descripcion }}</td>
+        <td class="num">{{ m.debe }}</td>
+        <td class="num">{{ m.haber }}</td>
+        <td class="num">{{ m.saldo }}</td>
+      </tr>
+      {% endfor %}
+      <tr class="total-row">
+        <td colspan="5">Saldo Final</td>
+        <td class="num">{{ saldo_final }}</td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p class="footer">Generado el {{ fecha_generacion }} · {{ tenant_nombre }}</p>
+</body>
+</html>

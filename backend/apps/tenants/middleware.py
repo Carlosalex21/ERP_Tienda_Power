@@ -19,8 +19,17 @@ from django_tenants.utils import get_public_schema_name
 # Prefijos de ruta que SIEMPRE pasan, incluso con la suscripción vencida:
 # el dueño necesita poder autenticarse y ver su propio estado de cuenta
 # para poder ir a pagar y reactivar su tenant.
+#
+# OJO: antes esto era el prefijo genérico `/api/v1/auth/` completo -- como
+# `apps.usuarios.urls` también cuelga de ahí la gestión de EMPLEADOS y
+# ROLES (`/api/v1/auth/management/`, `/api/v1/auth/roles/`), un tenant con
+# la suscripción vencida podía seguir administrando su plantilla sin pagar.
+# Se listan explícitas solo las rutas que en verdad necesita alguien
+# bloqueado para poder pagar y reactivarse.
 RUTAS_EXENTAS = (
-    '/api/v1/auth/',
+    '/api/v1/auth/token/',
+    '/api/v1/auth/me/',
+    '/api/v1/auth/password-reset/',
     '/api/v1/tenants/profile/',
     '/admin/',
 )

@@ -20,7 +20,7 @@ from __future__ import annotations
 from django.db import transaction
 from django.utils import timezone
 
-from apps.configuracion.core.config_service import obtener_y_actualizar_correlativo
+from apps.configuracion.services.conversion_service import get_moneda_base, convertir
 from apps.facturacion.models import Factura, Detallefactura
 from apps.facturacion.services.calculos_service import recalcular_y_guardar_factura
 from apps.inventario.models import Producto, Variacionproducto
@@ -56,14 +56,24 @@ def crear_pedido_b2b(cliente_b2b, items: list[dict]) -> Factura:
 
     disponible_antes = credit_service.credito_disponible(cliente_b2b)
 
+    # Moneda base del tenant: igual que en `order_service.crear_orden_desde_pedido_publico`,
+    # el pedido se registra siempre en ella (ver conversión de `precio_unitario`
+    # más abajo), sin importar en qué moneda esté cargado el precio de cada producto.
+    moneda_base = get_moneda_base()
+
     # `registrar_libro=False`: los totales todavía son 0 aquí (se calculan
     # más abajo con `recalcular_y_guardar_factura`), así que registrar esta
     # cabecera en el Libro de Ventas ahora mismo solo produciría una línea
     # en cero que ese segundo guardado reescribe de inmediato -- ver el
     # mismo comentario en `order_service.crear_orden_desde_pedido_publico`.
+    # No se le asigna `correlativo` aquí: `pendiente_de_aprobacion=True`
+    # hace que `Factura.save()` no le genere correlativo ni número de
+    # control hasta que el admin confirme el pedido (puede rechazarlo) --
+    # mismo criterio que `crear_orden_desde_pedido_publico`.
     factura = Factura(
-        correlativo=obtener_y_actualizar_correlativo(),
         estado='pendiente',
+        pendiente_de_aprobacion=True,
+        moneda=moneda_base,
         fecha_operacion=timezone.now(),
         cliente_b2b=cliente_b2b,
         nombre_cliente_pendiente=cliente_b2b.razon_social,
@@ -73,7 +83,7 @@ def crear_pedido_b2b(cliente_b2b, items: list[dict]) -> Factura:
 
     for item in items:
         try:
-            producto = Producto.objects.get(id=item['producto_id'], activo=True, disponible_online=True)
+            producto = Producto.objects.select_related('moneda').get(id=item['producto_id'], activo=True, disponible_online=True)
         except Producto.DoesNotExist:
             raise B2BOrderCreationError(f"El producto con ID {item['producto_id']} no existe o no está disponible.")
 
@@ -92,6 +102,11 @@ def crear_pedido_b2b(cliente_b2b, items: list[dict]) -> Factura:
         item_a_vender = variante or producto
         cantidad = int(item['cantidad'])
         precio_efectivo = calcular_precio_efectivo(item_a_vender, cliente_b2b)
+        # `precio_efectivo` puede venir en la moneda propia del producto
+        # (`producto.moneda`) -- convertir a la moneda base de la factura,
+        # ver mismo criterio y comentario en `order_service.crear_orden_desde_pedido_publico`.
+        if producto.moneda_id and producto.moneda.codigo != moneda_base.codigo:
+            precio_efectivo = convertir(precio_efectivo, producto.moneda.codigo, moneda_base.codigo)
 
         try:
             reducir_stock_item(item_a_vender, cantidad)

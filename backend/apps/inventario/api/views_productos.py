@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework import status, permissions, viewsets
 from drf_spectacular.utils import extend_schema
 
-from apps.core.permissions import IsTenantAdmin
+from apps.core.permissions import IsTenantAdmin, IsAdminOrAlmacenista
 from apps.core.response import standard_response
 from ..models import Producto, Variacionproducto, PresentacionProducto
 from .serializers import ProductoSerializer, VariacionproductoSerializer, PresentacionProductoSerializer
@@ -35,6 +35,12 @@ class ProductoViewSet(viewsets.ModelViewSet):
         # que el resto de acciones destructivas del sistema fiscal.
         if self.action == 'destroy':
             self.permission_classes = [IsTenantAdmin]
+        elif self.action in ('create', 'update', 'partial_update'):
+            # Antes cualquier empleado autenticado (incl. cajero, RRHH) podía
+            # cambiar el PRECIO de cualquier producto -- solo `destroy`
+            # estaba protegido. Se restringe a quien de verdad gestiona el
+            # catálogo/precios.
+            self.permission_classes = [IsAdminOrAlmacenista]
         return super().get_permissions()
 
     def perform_create(self, serializer):
@@ -67,6 +73,8 @@ class VariacionproductoViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'destroy':
             self.permission_classes = [IsTenantAdmin]
+        elif self.action in ('create', 'update', 'partial_update'):
+            self.permission_classes = [IsAdminOrAlmacenista]
         return super().get_permissions()
 
     def perform_destroy(self, instance):
@@ -86,6 +94,8 @@ class PresentacionProductoViewSet(viewsets.ModelViewSet):
     def get_permissions(self):
         if self.action == 'destroy':
             self.permission_classes = [IsTenantAdmin]
+        elif self.action in ('create', 'update', 'partial_update'):
+            self.permission_classes = [IsAdminOrAlmacenista]
         return super().get_permissions()
 
     def perform_destroy(self, instance):

@@ -1,5 +1,6 @@
 from datetime import date
 
+from django.contrib.postgres.fields import ArrayField
 from django.db import models
 from django_tenants.models import TenantMixin, DomainMixin
 from django.conf import settings
@@ -44,6 +45,17 @@ class Plan(models.Model):
     )
     descripcion = models.TextField(blank=True, default='')
     activo = models.BooleanField(default=True)
+    # A qué tipos de negocio se le ofrece/cobra este plan (ver
+    # Client.TIPO_NEGOCIO_CHOICES) -- un contador no necesita lo mismo que
+    # una tienda al detal, y no tiene sentido cobrarles igual. Vacío =
+    # aplica a todos (así los planes ya existentes, sembrados antes de este
+    # campo, siguen mostrándose a cualquiera sin tener que migrarlos a mano).
+    tipos_negocio = ArrayField(
+        models.CharField(max_length=20),
+        blank=True,
+        default=list,
+        help_text="Tipos de negocio a los que aplica este plan. Vacío = aplica a todos.",
+    )
 
     def __str__(self):
         return self.nombre
@@ -53,9 +65,19 @@ class Client(TenantMixin):
     Modelo principal que representa a un inquilino (tenant) en el sistema.
     Cada 'Client' tiene su propio esquema de base de datos aislado.
     """
+    # Cada tipo habilita/oculta módulos propios en el panel (ver
+    # `modulosPanel.ts` en el frontend y `Sidebar.tsx`) -- un tenant tiene
+    # UN tipo principal, no una combinación; si en el futuro un negocio
+    # necesita mezclar verticales (ej. una farmacia con restaurante adentro)
+    # se resuelve activando módulos individuales, no agregando un choice
+    # nuevo por cada combinación posible.
     TIPO_NEGOCIO_CHOICES = (
         ('retail', 'Retail (Venta al Detal)'),
         ('b2b', 'B2B (Mayorista/Fabricante)'),
+        ('restaurante', 'Restaurante / Bar'),
+        ('farmacia', 'Farmacia'),
+        ('servicios', 'Taller / Servicios'),
+        ('contador', 'Contador / Firma Contable'),
     )
     # Países soportados por el motor fiscal (ver apps.configuracion.core.tax_strategy).
     # Se duplica aquí como constante simple en vez de importar el registro de
@@ -81,7 +103,7 @@ class Client(TenantMixin):
     fecha_creacion = models.DateTimeField(auto_now_add=True)
 
     # --- NUEVOS CAMPOS ---
-    tipo_negocio = models.CharField(max_length=10, choices=TIPO_NEGOCIO_CHOICES, default='retail', help_text="Modelo de negocio principal del inquilino.")
+    tipo_negocio = models.CharField(max_length=20, choices=TIPO_NEGOCIO_CHOICES, default='retail', help_text="Modelo de negocio principal del inquilino.")
     onboarding_completado = models.BooleanField(default=False, help_text="Indica si el inquilino ha completado el asistente de configuración inicial.")
     pais_codigo = models.CharField(
         max_length=2, choices=PAIS_CHOICES, default='VE',

@@ -1,9 +1,9 @@
 from rest_framework.views import APIView
 from rest_framework.response import Response
-from rest_framework.permissions import IsAuthenticated
 from rest_framework import status
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
+from apps.core.permissions import IsTenantAdmin
 from apps.facturacion.models import Factura
 
 # Importamos nuestro servicio core
@@ -14,7 +14,10 @@ from apps.reportes.api.serializers import FacturaReportSerializer, VentaReporteS
 
 class CashClosingReportView(APIView):
     """Genera el reporte de cierre de caja para el día actual o uno específico."""
-    permission_classes = [IsAuthenticated]
+    # Reporte financiero tenant-wide (cierre de caja / ventas) -- antes
+    # cualquier empleado autenticado podía verlo, mismo patrón ya corregido
+    # en `facturacion/api/views_caja.py` (HistorialCajaView/CobrosReportView).
+    permission_classes = [IsTenantAdmin]
 
     def get(self, request):
         date_str = request.query_params.get('date', None)
@@ -36,7 +39,10 @@ class CashClosingReportView(APIView):
 
 
 class ReporteventaView(APIView):
-    permission_classes = [IsAuthenticated]
+    # Reporte financiero tenant-wide (cierre de caja / ventas) -- antes
+    # cualquier empleado autenticado podía verlo, mismo patrón ya corregido
+    # en `facturacion/api/views_caja.py` (HistorialCajaView/CobrosReportView).
+    permission_classes = [IsTenantAdmin]
 
     @extend_schema(
         summary="Reporte de Ventas",
@@ -57,7 +63,10 @@ class ReporteventaView(APIView):
 
 class FacturaDetalleReporteView(APIView):
     """Reporte detallado de ventas (incluyendo los ítems comprados en cada factura)."""
-    permission_classes = [IsAuthenticated]
+    # Reporte financiero tenant-wide (cierre de caja / ventas) -- antes
+    # cualquier empleado autenticado podía verlo, mismo patrón ya corregido
+    # en `facturacion/api/views_caja.py` (HistorialCajaView/CobrosReportView).
+    permission_classes = [IsTenantAdmin]
 
     def get(self, request):
         try:

@@ -1,7 +1,8 @@
 # apps/proveedores/api/views.py
-from rest_framework import viewsets, permissions, status
+from rest_framework import viewsets, status
 from rest_framework.response import Response
 
+from apps.core.permissions import IsAdminOrVendedor
 from apps.proveedores.models import Proveedor
 from apps.proveedores.api.serializers import ProveedorSerializer
 from apps.proveedores.core.proveedores_service import desactivar_proveedor_service
@@ -12,7 +13,10 @@ class ProveedorViewSet(viewsets.ModelViewSet):
     """
     queryset = Proveedor.objects.filter(activo=True).order_by('id')
     serializer_class = ProveedorSerializer
-    permission_classes = [permissions.IsAuthenticated]
+    # Incluye datos fiscales SENIAT (identificador_fiscal,
+    # es_contribuyente_especial) -- antes cualquier empleado autenticado
+    # podía editarlos.
+    permission_classes = [IsAdminOrVendedor]
 
     def destroy(self, request, *args, **kwargs):
         """

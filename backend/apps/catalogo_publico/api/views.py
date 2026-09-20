@@ -7,6 +7,7 @@ ser anónima, va aquí, no dentro de una app privada como `facturacion` o
 """
 import logging
 
+from django.core import signing
 from django.utils.decorators import method_decorator
 from django.views.decorators.csrf import csrf_exempt
 from django.contrib.auth import get_user_model
@@ -37,6 +38,23 @@ from .serializers import (
 
 logger = logging.getLogger(__name__)
 
+# Firma (no un ID adivinable) que prueba que quien pide la sesión de pago
+# con tarjeta es el mismo navegador que creó el pedido -- ver el comentario
+# en `CrearSesionStripeView`.
+_STRIPE_SESSION_SALT = 'catalogo_publico.crear_sesion_stripe'
+
+
+def _firmar_acceso_factura(factura_id: int) -> str:
+    return signing.Signer(salt=_STRIPE_SESSION_SALT).sign(str(factura_id))
+
+
+def _token_valido_para_factura(token: str, factura_id: int) -> bool:
+    try:
+        valor = signing.Signer(salt=_STRIPE_SESSION_SALT).unsign(token)
+    except signing.BadSignature:
+        return False
+    return valor == str(factura_id)
+
 
 class CatalogoPageNumberPagination(PageNumberPagination):
     page_size = 10
@@ -59,8 +77,13 @@ class CatalogoPublicoView(generics.GenericAPIView):
     serializer_class = PublicProductoSerializer
 
     def get_queryset(self):
-        return Producto.objects.select_related('moneda', 'configuracion_iva').filter(
-            activo=True, disponible_online=True,
+        # `es_insumo=False` además de `disponible_online=True`: un insumo
+        # interno (materia prima) nunca debería listarse aquí aunque alguien
+        # olvide desmarcar también "disponible online" -- son dos banderas
+        # con intención distinta (una es "no se vende en línea", la otra es
+        # "no se ofrece directamente, punto").
+        return Producto.objects.select_related('moneda', 'configuracion_iva', 'categoria').filter(
+            activo=True, disponible_online=True, es_insumo=False,
         ).order_by('nombre')
 
     @extend_schema(summary="Ver Catálogo de Productos Público", responses=PublicProductoSerializer(many=True))
@@ -97,8 +120,15 @@ class EmpresaInfoPublicaView(APIView):
 
     def get(self, request):
         empresa, _ = ConfiguracionEmpresa.objects.get_or_create(pk=1)
-        serializer = PublicEmpresaInfoSerializer(empresa)
-        return Response(serializer.data)
+        serializer = PublicEmpresaInfoSerializer(empresa, context={'request': request})
+        data = dict(serializer.data)
+        # `tipo_negocio` vive en `Client` (esquema público), no en
+        # `ConfiguracionEmpresa` (esquema del tenant) -- `request.tenant` ya
+        # es ese `Client` gracias al middleware de django-tenants. Se expone
+        # para que el storefront pueda adaptar su copy (ej. "Menú" en vez de
+        # "Catálogo" para un restaurante) sin otro roundtrip.
+        data['tipo_negocio'] = getattr(request.tenant, 'tipo_negocio', None)
+        return Response(data)
 
 
 class TasasPublicasView(APIView):
@@ -156,6 +186,11 @@ class CrearPedidoPublicoView(APIView):
             "message": "Pedido recibido exitosamente. Nos pondremos en contacto contigo.",
             "factura_id": factura.id,
             "correlativo": factura.correlativo,
+            # Prueba de que este navegador es el que creó el pedido -- lo
+            # necesita `CrearSesionStripeView` para no dejar que cualquier
+            # visitante anónimo inicie el pago de un pedido AJENO con solo
+            # adivinar su `factura_id` (son consecutivos).
+            "access_token": _firmar_acceso_factura(factura.id),
         }, status=status.HTTP_201_CREATED)
 
 
@@ -172,13 +207,22 @@ class CrearSesionStripeView(APIView):
 
     def post(self, request):
         factura_id = request.data.get('factura_id')
+        access_token = request.data.get('access_token')
         success_url = request.data.get('success_url')
         cancel_url = request.data.get('cancel_url')
-        if not (factura_id and success_url and cancel_url):
+        if not (factura_id and access_token and success_url and cancel_url):
             return Response(
-                {"error": "Se requieren factura_id, success_url y cancel_url."},
+                {"error": "Se requieren factura_id, access_token, success_url y cancel_url."},
                 status=status.HTTP_400_BAD_REQUEST,
             )
+
+        # `factura_id` es un correlativo numérico adivinable -- sin esta
+        # verificación, cualquier visitante anónimo podía iniciar el pago
+        # con tarjeta de un pedido AJENO con solo probar IDs consecutivos
+        # (`access_token` solo lo tiene quien recibió la respuesta de
+        # `CrearPedidoPublicoView` para ESTE pedido en particular).
+        if not _token_valido_para_factura(access_token, factura_id):
+            return Response({"error": "Pedido no encontrado o ya procesado."}, status=status.HTTP_404_NOT_FOUND)
 
         factura = Factura.objects.filter(id=factura_id, estado='pendiente').first()
         if not factura:

@@ -66,12 +66,20 @@ class PublicMetodoPagoConfigSerializer(serializers.ModelSerializer):
 class PublicEmpresaInfoSerializer(serializers.ModelSerializer):
     """
     Datos mínimos y seguros de la empresa para el storefront público -- solo
-    lo que un visitante anónimo necesita (nombre y teléfono de contacto).
-    Nunca expone RIF, razón social o dirección fiscal.
+    lo que un visitante anónimo necesita (nombre, teléfono de contacto y
+    logo). Nunca expone RIF, razón social o dirección fiscal.
     """
+    logo_url = serializers.SerializerMethodField()
+
     class Meta:
         model = ConfiguracionEmpresa
-        fields = ('nombre_comercial', 'telefono')
+        fields = ('nombre_comercial', 'telefono', 'logo_url')
+
+    def get_logo_url(self, obj):
+        request = self.context.get('request')
+        if obj.logo and hasattr(obj.logo, 'url') and request is not None:
+            return request.build_absolute_uri(obj.logo.url)
+        return None
 
 
 class PublicProductoSerializer(serializers.Serializer):
@@ -94,6 +102,8 @@ class PublicProductoSerializer(serializers.Serializer):
     moneda_simbolo = serializers.SerializerMethodField()
     stock_disponible = serializers.SerializerMethodField()
     imagen_url = serializers.SerializerMethodField()
+    categoria_id = serializers.IntegerField(read_only=True, default=None)
+    categoria_nombre = serializers.CharField(source='categoria.nombre', read_only=True, default=None)
 
     def get_moneda_codigo(self, obj):
         moneda = obj.moneda or self._moneda_base()

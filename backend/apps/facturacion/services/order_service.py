@@ -4,8 +4,7 @@ from django.utils import timezone
 from apps.inventario.models import Producto
 from apps.clientes.models import Cliente
 from apps.inventario.services.stock_service import reducir_stock_item
-from apps.configuracion.core.config_service import obtener_y_actualizar_correlativo
-from apps.configuracion.services.conversion_service import get_tasa_vigente
+from apps.configuracion.services.conversion_service import get_tasa_vigente, get_moneda_base, convertir
 from apps.pagos.models import MetodoPagoConfig, TransaccionPasarela
 from .calculos_service import recalcular_y_guardar_factura
 
@@ -36,6 +35,13 @@ def crear_orden_desde_pedido_publico(validated_data, usuario_sistema):
     except Exception:
         pass  # Si de verdad hace falta una tasa y no hay, fallará más abajo con un error claro.
 
+    # Moneda base del tenant: los pedidos del catálogo se registran SIEMPRE
+    # en ella (ver más abajo la conversión de `precio_unitario`) -- así la
+    # factura resultante es consistente con cualquier otra del sistema y
+    # `recalcular_y_guardar_factura` puede consolidar sus totales en base sin
+    # tratarla como un caso especial.
+    moneda_base = get_moneda_base()
+
     with transaction.atomic():
         # 1. Obtener o crear el cliente
         cliente, _ = Cliente.objects.get_or_create(
@@ -48,11 +54,16 @@ def crear_orden_desde_pedido_publico(validated_data, usuario_sistema):
         # así que registrarla ahora en el Libro de Ventas solo produciría una
         # línea con montos en cero que el guardado del paso 4 reescribiría de
         # inmediato -- una consulta+escritura de por medio sin ningún valor.
+        # No se le asigna `correlativo` aquí: `pendiente_de_aprobacion=True`
+        # hace que `Factura.save()` NO le genere correlativo ni número de
+        # control todavía -- este pedido puede ser rechazado por el admin, y
+        # hasta que no lo confirme no debe "quemar" numeración fiscal.
         factura = Factura(
             cliente=cliente,
             usuario=usuario_sistema, # Un usuario genérico del sistema para pedidos públicos
-            correlativo=obtener_y_actualizar_correlativo(),
             estado='pendiente', # El pedido debe ser confirmado por el admin
+            pendiente_de_aprobacion=True,
+            moneda=moneda_base,
             fecha_operacion=timezone.now(),
             # Los totales se inicializan en 0 gracias a los defaults del modelo
         )
@@ -66,7 +77,7 @@ def crear_orden_desde_pedido_publico(validated_data, usuario_sistema):
         # venta concurrente sobre el mismo producto (ver `stock_service`).
         producto_ids = [item['producto_id'] for item in validated_data['items']]
         productos_por_id = {
-            p.id: p for p in Producto.objects.filter(id__in=producto_ids, disponible_online=True)
+            p.id: p for p in Producto.objects.select_related('moneda').filter(id__in=producto_ids, disponible_online=True)
         }
 
         detalles_a_crear = []
@@ -78,12 +89,24 @@ def crear_orden_desde_pedido_publico(validated_data, usuario_sistema):
                 reducir_stock_item(producto, item_data['cantidad'])
             except ValueError as e:  # Error de stock insuficiente
                 raise OrderCreationError(str(e))
+            # `producto.precio` puede estar expresado en la moneda propia del
+            # producto (`producto.moneda`), no necesariamente en la moneda
+            # base del tenant -- copiarlo tal cual (como antes) dejaba un
+            # monto, por ejemplo, en USD guardado como si fuera Bs, sin
+            # ninguna conversión real (`factura.moneda` nunca se seteaba, así
+            # que `recalcular_y_guardar_factura` lo trataba como "ya está en
+            # base" y no corregía nada). Si el producto no tiene moneda
+            # asignada, ya se asume en la moneda base (mismo criterio que
+            # usa el resto del sistema, ver `Producto.moneda`).
+            precio_unitario = producto.precio or 0
+            if producto.moneda_id and producto.moneda.codigo != moneda_base.codigo:
+                precio_unitario = convertir(precio_unitario, producto.moneda.codigo, moneda_base.codigo)
             detalles_a_crear.append(Detallefactura(
                 factura=factura,
                 producto=producto,
                 variante=None,
                 cantidad=item_data['cantidad'],
-                precio_unitario=producto.precio,
+                precio_unitario=precio_unitario,
             ))
         Detallefactura.objects.bulk_create(detalles_a_crear)
 
