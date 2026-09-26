@@ -268,6 +268,10 @@ class SubscriptionPayment(models.Model):
     fecha_confirmacion = models.DateTimeField(blank=True, null=True)
     confirmado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
     notas = models.TextField(blank=True, default='')
+    credito_aplicado = models.DecimalField(
+        max_digits=10, decimal_places=2, default=0,
+        help_text="Crédito acreditado por el tiempo no consumido del plan anterior (upgrade a mitad de período). 0 en renovaciones del mismo plan.",
+    )
 
     class Meta:
         verbose_name = "Pago de Suscripción"

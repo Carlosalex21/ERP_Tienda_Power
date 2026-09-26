@@ -12,6 +12,7 @@ la confirmación es automática vía webhook.
 """
 from __future__ import annotations
 
+from datetime import date
 from decimal import Decimal
 
 import stripe
@@ -53,6 +54,68 @@ def calcular_monto_periodo(precio_mensual: Decimal, periodo: str) -> Decimal:
     bruto = Decimal(precio_mensual) * info['meses']
     descuento = bruto * (Decimal(info['descuento_pct']) / Decimal(100))
     return (bruto - descuento).quantize(Decimal('0.01'))
+
+
+def calcular_credito_por_cambio_de_plan(client: Client) -> Decimal:
+    """
+    Crédito a favor del tenant por el tiempo NO consumido de su plan de pago
+    actual, proporcional a los días que le quedan sobre el período que
+    efectivamente pagó (según su último `SubscriptionPayment` confirmado) --
+    así un upgrade a mitad de período no cobra el plan nuevo completo otra
+    vez, solo la diferencia.
+
+    Devuelve 0 (precio de lista completo) cuando no aplica crédito: sin
+    suscripción de pago activa, en período de prueba, sin pagos confirmados
+    previos, o si ya está vencida. Le quedan "muy pocos días" no es un caso
+    especial aparte -- con pocos días restantes el crédito ya sale chico por
+    la misma fórmula, así que termina cobrando casi el precio completo sin
+    necesitar una regla adicional.
+    """
+    sub = getattr(client, 'subscription', None)
+    if not sub or not sub.is_active or not sub.plan_id:
+        return Decimal('0.00')
+    if sub.plan.nombre == 'Plan de Prueba':
+        return Decimal('0.00')
+    if not sub.fecha_fin:
+        return Decimal('0.00')
+
+    # `date.today()`, no `timezone.now().date()` -- mismo motivo que
+    # `Subscription.is_active`: `fecha_fin` se graba con la fecha del SO.
+    dias_restantes = (sub.fecha_fin - date.today()).days
+    if dias_restantes <= 0:
+        return Decimal('0.00')
+
+    ultimo_pago = (
+        SubscriptionPayment.objects.filter(client=client, estado='confirmado')
+        .order_by('-fecha_confirmacion')
+        .first()
+    )
+    if not ultimo_pago:
+        return Decimal('0.00')
+
+    dias_periodo_pagado = PERIODOS_SUSCRIPCION.get(ultimo_pago.periodo, PERIODOS_SUSCRIPCION['mensual'])['dias']
+    dias_restantes = min(dias_restantes, dias_periodo_pagado)
+    return (ultimo_pago.monto * Decimal(dias_restantes) / Decimal(dias_periodo_pagado)).quantize(Decimal('0.01'))
+
+
+def calcular_monto_a_cobrar(client: Client, plan: Plan, periodo: str) -> dict:
+    """
+    Monto real a cobrar por contratar `plan` en `periodo`, acreditando el
+    tiempo no consumido del plan actual cuando corresponde (ver
+    `calcular_credito_por_cambio_de_plan`). Renovar el MISMO plan no genera
+    crédito -- es una renovación (se sigue pagando el período completo que
+    empieza justo después), no un upgrade a mitad de camino.
+    """
+    monto_lista = calcular_monto_periodo(plan.precio, periodo)
+    sub = getattr(client, 'subscription', None)
+    es_renovacion_del_mismo_plan = bool(sub and sub.plan_id == plan.id)
+    credito = Decimal('0.00') if es_renovacion_del_mismo_plan else calcular_credito_por_cambio_de_plan(client)
+    credito = min(credito, monto_lista)
+    return {
+        'monto': (monto_lista - credito).quantize(Decimal('0.01')),
+        'credito': credito,
+        'monto_lista': monto_lista,
+    }
 
 
 def obtener_config_pago_plataforma() -> PlatformPaymentConfig:
@@ -102,7 +165,8 @@ def crear_pago_suscripcion(
     if not plan.aplica_a(client.tipo_negocio):
         raise PagoSuscripcionError("Este plan no está disponible para el tipo de negocio de tu cuenta.")
 
-    monto = calcular_monto_periodo(plan.precio, periodo)
+    cobro = calcular_monto_a_cobrar(client, plan, periodo)
+    monto = cobro['monto']
 
     pago = SubscriptionPayment.objects.create(
         client=client,
@@ -111,6 +175,7 @@ def crear_pago_suscripcion(
         monto=monto,
         metodo=metodo,
         referencia=referencia or '',
+        credito_aplicado=cobro['credito'],
     )
 
     if metodo != 'stripe':

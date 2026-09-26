@@ -218,7 +218,11 @@ class NominaEmpleadoConcepto(models.Model):
     sueldo actual del empleado.
     """
     nomina_empleado = models.ForeignKey(NominaEmpleado, on_delete=models.CASCADE, related_name='conceptos')
-    concepto = models.ForeignKey(ConceptoNomina, on_delete=models.PROTECT, related_name='+')
+    # Nulo = concepto puntual agregado a mano a ESTA línea (ej. una comisión
+    # de ventas del mes, que varía por empleado y no es un % o monto fijo
+    # recurrente para todos) -- no viene de un `ConceptoNomina` configurado,
+    # ver `apps.rrhh.services.agregar_concepto_manual`.
+    concepto = models.ForeignKey(ConceptoNomina, on_delete=models.PROTECT, related_name='+', null=True, blank=True)
     nombre = models.CharField(max_length=100)
     tipo = models.CharField(max_length=10, choices=ConceptoNomina.TIPO_CHOICES)
     monto = models.DecimalField(max_digits=12, decimal_places=2)

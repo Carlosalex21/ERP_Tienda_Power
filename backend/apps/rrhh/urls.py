@@ -4,6 +4,7 @@ from .api.views import (
     AttendanceSummaryView, ClockInView, ClockOutView, BreakView,
     HorarioDetailView, DiaFestivoListView, DiaFestivoDetailView,
     SucursalViewSet, DepartamentoViewSet, PeriodoNominaViewSet, ConceptoNominaViewSet,
+    NominaEmpleadoViewSet,
 )
 from .api.views_impresion import ReciboNominaImprimirView
 
@@ -12,6 +13,7 @@ router.register(r'sucursales', SucursalViewSet, basename='sucursal')
 router.register(r'departamentos', DepartamentoViewSet, basename='departamento')
 router.register(r'nomina', PeriodoNominaViewSet, basename='periodo-nomina')
 router.register(r'conceptos-nomina', ConceptoNominaViewSet, basename='concepto-nomina')
+router.register(r'nomina-empleados', NominaEmpleadoViewSet, basename='nomina-empleado')
 
 urlpatterns = [
     path("attendance-summary/", AttendanceSummaryView.as_view(), name='attendance-summary'),

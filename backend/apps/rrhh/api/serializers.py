@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from rest_framework import serializers
 from apps.rrhh.models import (
     Horario, DiaFestivo, Asistencia, Sucursal, Departamento, PeriodoNomina, NominaEmpleado,
@@ -70,6 +72,13 @@ class PeriodoNominaSerializer(serializers.ModelSerializer):
 class GenerarPeriodoNominaSerializer(serializers.Serializer):
     fecha_desde = serializers.DateField()
     fecha_hasta = serializers.DateField()
+
+
+class AgregarConceptoManualSerializer(serializers.Serializer):
+    """Concepto puntual (ej. una comisión) agregado a mano a una línea de nómina ya generada -- ver `apps.rrhh.services.agregar_concepto_manual`."""
+    nombre = serializers.CharField(max_length=100)
+    tipo = serializers.ChoiceField(choices=ConceptoNomina.TIPO_CHOICES)
+    monto = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
 
 
 class HorarioSerializer(serializers.ModelSerializer):

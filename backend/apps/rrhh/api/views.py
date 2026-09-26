@@ -8,13 +8,16 @@ from datetime import date, datetime, timedelta
 from drf_spectacular.utils import extend_schema
 from apps.core.permissions import IsTenantAdmin
 
-from apps.rrhh.models import Horario, DiaFestivo, Asistencia, Descanso, Sucursal, Departamento, PeriodoNomina, ConceptoNomina
+from apps.rrhh.models import Horario, DiaFestivo, Asistencia, Descanso, Sucursal, Departamento, PeriodoNomina, ConceptoNomina, NominaEmpleado
 from apps.rrhh.api.serializers import (
     HorarioSerializer, DiaFestivoSerializer, AsistenciaSerializer, SucursalSerializer,
     AttendanceSummaryResponseSerializer, DepartamentoSerializer,
     PeriodoNominaSerializer, GenerarPeriodoNominaSerializer, ConceptoNominaSerializer,
+    NominaEmpleadoSerializer, AgregarConceptoManualSerializer,
 )
-from apps.rrhh.services import generar_periodo_nomina, pagar_periodo_nomina, NominaError
+from apps.rrhh.services import (
+    generar_periodo_nomina, pagar_periodo_nomina, agregar_concepto_manual, quitar_concepto_manual, NominaError,
+)
 
 def get_working_days(year, month):
     """Calcula los días laborables (L-V) de un mes."""
@@ -95,6 +98,43 @@ class PeriodoNominaViewSet(viewsets.ModelViewSet):
         except NominaError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(periodo).data)
+
+
+class NominaEmpleadoViewSet(viewsets.GenericViewSet):
+    """
+    Acciones puntuales sobre UNA línea de nómina ya generada -- agregar o
+    quitar un concepto manual (ej. una comisión de ventas, que varía por
+    empleado y no encaja como un `ConceptoNomina` recurrente/global). Ver
+    `apps.rrhh.services.agregar_concepto_manual`/`quitar_concepto_manual`.
+    """
+    queryset = NominaEmpleado.objects.select_related('periodo').prefetch_related('conceptos')
+    serializer_class = NominaEmpleadoSerializer
+    permission_classes = [IsTenantAdmin]
+
+    @action(detail=True, methods=['post'], url_path='conceptos')
+    def agregar_concepto(self, request, pk=None):
+        nomina_empleado = self.get_object()
+        serializer = AgregarConceptoManualSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            agregar_concepto_manual(nomina_empleado, **serializer.validated_data)
+        except NominaError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        nomina_empleado.refresh_from_db()
+        return Response(self.get_serializer(nomina_empleado).data)
+
+    @action(detail=True, methods=['delete'], url_path=r'conceptos/(?P<concepto_id>\d+)')
+    def quitar_concepto(self, request, pk=None, concepto_id=None):
+        nomina_empleado = self.get_object()
+        concepto_aplicado = nomina_empleado.conceptos.filter(pk=concepto_id).first()
+        if concepto_aplicado is None:
+            return Response({"error": "Concepto no encontrado en esta línea."}, status=status.HTTP_404_NOT_FOUND)
+        try:
+            quitar_concepto_manual(concepto_aplicado)
+        except NominaError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        nomina_empleado.refresh_from_db()
+        return Response(self.get_serializer(nomina_empleado).data)
 
 
 class HorarioDetailView(APIView):

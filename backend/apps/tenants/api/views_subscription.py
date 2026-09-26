@@ -23,7 +23,7 @@ from .serializers import (
     MiClienteSerializer, PlatformPaymentInfoSerializer, PlatformPaymentConfigSerializer,
     CrearPagoSuscripcionSerializer, CrearPagoSuscripcionTenantSerializer, SubscriptionPaymentSerializer,
     PlatformSettingsSerializer, RegistrationQuotaSerializer, PeriodoSuscripcionSerializer,
-    ReferidoProgramaSerializer,
+    ReferidoProgramaSerializer, CotizarSuscripcionResponseSerializer,
 )
 
 class PlanViewSet(viewsets.ModelViewSet):
@@ -479,6 +479,46 @@ class CrearPagoSuscripcionDesdeAdminView(APIView):
             "monto": str(pago.monto),
             "checkout_url": checkout_url,
         }, status=status.HTTP_201_CREATED)
+
+
+class CotizarPagoSuscripcionView(APIView):
+    """
+    Monto real que se le cobraría al tenant actual por `plan_id`/`periodo`,
+    ya con el crédito por upgrade a mitad de período aplicado (ver
+    `calcular_monto_a_cobrar`) -- el panel de suscripción lo consulta para
+    mostrar el monto correcto ANTES de que el tenant reporte un pago manual
+    (Pago Móvil/Zelle), en vez de mostrarle el precio de lista completo y
+    cobrarle otra cosa distinta al confirmar.
+    """
+    permission_classes = [IsTenantAdmin]
+
+    @extend_schema(
+        summary="Cotizar el monto real a cobrar por un plan/período (con crédito de upgrade aplicado)",
+        parameters=[
+            OpenApiParameter(name='plan_id', type=OpenApiTypes.INT, required=True, location=OpenApiParameter.QUERY),
+            OpenApiParameter(name='periodo', type=OpenApiTypes.STR, required=False, location=OpenApiParameter.QUERY),
+        ],
+        responses=CotizarSuscripcionResponseSerializer,
+    )
+    def get(self, request):
+        plan_id = request.query_params.get('plan_id')
+        periodo = request.query_params.get('periodo', 'mensual')
+        if not plan_id:
+            return Response({"error": "Falta el parámetro 'plan_id'."}, status=status.HTTP_400_BAD_REQUEST)
+
+        plan = get_object_or_404(Plan, id=plan_id, activo=True)
+        try:
+            cobro = pago_suscripcion_service.calcular_monto_a_cobrar(request.tenant, plan, periodo)
+        except pago_suscripcion_service.PagoSuscripcionError as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+        data = {
+            'monto': str(cobro['monto']),
+            'credito': str(cobro['credito']),
+            'monto_lista': str(cobro['monto_lista']),
+            'es_upgrade_con_credito': cobro['credito'] > 0,
+        }
+        return Response(CotizarSuscripcionResponseSerializer(data).data)
 
 
 class PeriodosSuscripcionView(APIView):

@@ -11,6 +11,7 @@ from drf_spectacular.views import (
 from apps.tenants.api.views_subscription import (
     TenantProfileView, PlanViewSet, PeriodosSuscripcionView, PlatformPaymentInfoView,
     CrearPagoSuscripcionDesdeAdminView, TasaBcvPlataformaView, ReferidoProgramaView,
+    CotizarPagoSuscripcionView,
 )
 
 urlpatterns = [
@@ -53,6 +54,7 @@ urlpatterns = [
     path('api/v1/tenants/payment-info/', PlatformPaymentInfoView.as_view(), name='tenant-payment-info'),
     path('api/v1/tenants/tasa-bcv/', TasaBcvPlataformaView.as_view(), name='tenant-tasa-bcv'),
     path('api/v1/tenants/pagos-suscripcion-admin/', CrearPagoSuscripcionDesdeAdminView.as_view(), name='tenant-crear-pago-suscripcion'),
+    path('api/v1/tenants/cotizar-suscripcion/', CotizarPagoSuscripcionView.as_view(), name='tenant-cotizar-suscripcion'),
     path('api/v1/tenants/referidos/', ReferidoProgramaView.as_view(), name='tenant-referidos'),
     path('api/v1/configuracion/', include('apps.configuracion.urls')),
     path('api/v1/auditoria/', include('apps.auditoria.urls')),

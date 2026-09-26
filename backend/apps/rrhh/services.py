@@ -133,14 +133,67 @@ def generar_periodo_nomina(*, fecha_desde, fecha_hasta, usuario) -> PeriodoNomin
             total_pagar=total_provisional,
         )
 
-        total_bonos, total_deducciones = _aplicar_conceptos_recurrentes(nomina_empleado, sueldo_base)
-        total = _round(sueldo_base - deduccion_ausencias + pago_horas_extra + total_bonos - total_deducciones)
-        nomina_empleado.bonificaciones = total_bonos
-        nomina_empleado.otras_deducciones = total_deducciones
-        nomina_empleado.total_pagar = total
-        nomina_empleado.save(update_fields=['bonificaciones', 'otras_deducciones', 'total_pagar'])
+        _aplicar_conceptos_recurrentes(nomina_empleado, sueldo_base)
+        _recalcular_totales(nomina_empleado)
 
     return periodo
+
+
+def _recalcular_totales(nomina_empleado: NominaEmpleado) -> None:
+    """
+    Recalcula bonificaciones/otras_deducciones/total_pagar de una línea a
+    partir de TODOS sus `NominaEmpleadoConcepto` actuales (recurrentes +
+    puntuales) -- se llama tanto al generar el período como al agregar o
+    quitar un concepto manual después (ver `agregar_concepto_manual`).
+    """
+    conceptos = nomina_empleado.conceptos.all()
+    total_bonos = _round(sum((c.monto for c in conceptos if c.tipo == 'bono'), Decimal('0')))
+    total_deducciones = _round(sum((c.monto for c in conceptos if c.tipo == 'deduccion'), Decimal('0')))
+    total = _round(
+        nomina_empleado.sueldo_base - nomina_empleado.deduccion_ausencias + nomina_empleado.pago_horas_extra
+        + total_bonos - total_deducciones,
+    )
+    nomina_empleado.bonificaciones = total_bonos
+    nomina_empleado.otras_deducciones = total_deducciones
+    nomina_empleado.total_pagar = total
+    nomina_empleado.save(update_fields=['bonificaciones', 'otras_deducciones', 'total_pagar'])
+
+
+@transaction.atomic
+def agregar_concepto_manual(nomina_empleado: NominaEmpleado, *, nombre: str, tipo: str, monto: Decimal) -> NominaEmpleado:
+    """
+    Agrega un concepto puntual (ej. una comisión de ventas del mes, que varía
+    por empleado y no es un % o monto fijo recurrente para todos -- ver
+    `ConceptoNomina`) a UNA línea de nómina ya generada, mientras su período
+    siga en borrador. No crea un `ConceptoNomina` reutilizable: es exclusivo
+    de este período/empleado, igual que el resto de la línea es un snapshot.
+    """
+    if nomina_empleado.periodo.estado != 'borrador':
+        raise NominaError('Solo se pueden agregar conceptos a un período todavía en borrador.')
+    if tipo not in dict(ConceptoNomina.TIPO_CHOICES):
+        raise NominaError('Tipo de concepto inválido.')
+    monto = _round(monto)
+    if monto <= 0:
+        raise NominaError('El monto debe ser mayor a 0.')
+
+    NominaEmpleadoConcepto.objects.create(
+        nomina_empleado=nomina_empleado, concepto=None, nombre=nombre, tipo=tipo, monto=monto,
+    )
+    _recalcular_totales(nomina_empleado)
+    return nomina_empleado
+
+
+@transaction.atomic
+def quitar_concepto_manual(concepto_aplicado: NominaEmpleadoConcepto) -> NominaEmpleado:
+    """Inversa de `agregar_concepto_manual` -- no permite tocar uno que venga de un `ConceptoNomina` recurrente (ese se desactiva desde Bonos y Deducciones, no se borra línea por línea)."""
+    nomina_empleado = concepto_aplicado.nomina_empleado
+    if nomina_empleado.periodo.estado != 'borrador':
+        raise NominaError('Solo se pueden quitar conceptos de un período todavía en borrador.')
+    if concepto_aplicado.concepto_id is not None:
+        raise NominaError('Este concepto viene de una configuración recurrente -- desactívalo desde Bonos y Deducciones.')
+    concepto_aplicado.delete()
+    _recalcular_totales(nomina_empleado)
+    return nomina_empleado
 
 
 @transaction.atomic

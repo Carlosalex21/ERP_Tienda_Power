@@ -20,11 +20,19 @@ class SubscriptionService:
         """
         Activa o renueva la suscripción de un cliente, asumiendo pago exitoso.
 
-        Si el cliente ya tiene una suscripción vigente (activa y con
-        `fecha_fin` en el futuro), la renovación EXTIENDE esa fecha_fin en
-        vez de reiniciarla desde hoy -- de lo contrario un cliente que paga
+        Si el cliente ya tiene una suscripción vigente del MISMO plan (activa
+        y con `fecha_fin` en el futuro), la renovación EXTIENDE esa fecha_fin
+        en vez de reiniciarla desde hoy -- de lo contrario un cliente que paga
         por adelantado (ej. renueva unos días antes de vencer) perdería los
         días que ya pagó y no usó.
+
+        Un cambio de PLAN (upgrade/downgrade) en cambio reinicia la fecha
+        desde hoy: el valor de los días no consumidos del plan anterior ya se
+        le acredita en dinero contra el nuevo plan (ver
+        `apps.tenants.services.subscription_payment_service.
+        calcular_credito_por_cambio_de_plan`) -- si además se le sumaran esos
+        días sin consumir a la fecha_fin del plan nuevo, el crédito se estaría
+        pagando dos veces (en dinero Y en tiempo extra).
         """
         client = Client.objects.get(id=client_id)
         plan = Plan.objects.get(id=plan_id)
@@ -38,7 +46,8 @@ class SubscriptionService:
         # `timezone.now().date()` puede irse un día por delante y romper la
         # comparación "¿la suscripción sigue vigente?".
         hoy = date.today()
-        if old_sub and old_sub.estado == 'activa' and old_sub.fecha_fin and old_sub.fecha_fin >= hoy:
+        es_renovacion_del_mismo_plan = bool(old_sub and old_sub.plan_id == plan_id)
+        if es_renovacion_del_mismo_plan and old_sub.estado == 'activa' and old_sub.fecha_fin and old_sub.fecha_fin >= hoy:
             fecha_inicio = old_sub.fecha_inicio
             fecha_fin = old_sub.fecha_fin + timedelta(days=duration_days)
         else:

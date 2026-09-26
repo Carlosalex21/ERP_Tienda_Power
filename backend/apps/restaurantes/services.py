@@ -44,7 +44,7 @@ def cerrar_pedido_mesa(
 
     items = list(pedido.items.select_related('producto__moneda').all())
     if not items:
-        raise CerrarPedidoMesaError("La mesa no tiene ítems que facturar.")
+        raise CerrarPedidoMesaError("La mesa no tiene comandas que facturar.")
 
     moneda_base = Moneda.objects.filter(es_predeterminada=True).first()
     # El mesero elige en qué moneda cobra la mesa (ej. un tenant con base COP

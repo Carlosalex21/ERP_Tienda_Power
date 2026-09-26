@@ -143,7 +143,7 @@ class PedidoMesaViewSet(viewsets.ModelViewSet):
         item_id = request.data.get('item_id')
         item = pedido.items.filter(pk=item_id).first()
         if item is None:
-            return Response({"error": "Ítem no encontrado en este pedido."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Comanda no encontrada en este pedido."}, status=status.HTTP_404_NOT_FOUND)
         # Simétrico a agregar_item: por defecto quita de a uno en vez de
         # borrar toda la línea de una vez (para no perder el resto de la
         # cantidad con un solo tap del "-"); `eliminar_todo` es lo que usa el
@@ -168,7 +168,7 @@ class PedidoMesaViewSet(viewsets.ModelViewSet):
         if pedido.estado != 'abierto':
             return Response({"error": "Este pedido ya está cerrado."}, status=status.HTTP_400_BAD_REQUEST)
         if pedido.items.exists():
-            return Response({"error": "Este pedido ya tiene ítems -- no se puede cancelar así."}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": "Este pedido ya tiene comandas -- no se puede cancelar así."}, status=status.HTTP_400_BAD_REQUEST)
         pedido.delete()
         notificar_mesas_actualizadas()
         return Response(status=status.HTTP_204_NO_CONTENT)
@@ -180,7 +180,7 @@ class PedidoMesaViewSet(viewsets.ModelViewSet):
         item_id = request.data.get('item_id')
         item = pedido.items.filter(pk=item_id).first()
         if item is None:
-            return Response({"error": "Ítem no encontrado en este pedido."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Comanda no encontrada en este pedido."}, status=status.HTTP_404_NOT_FOUND)
         item.preparado = not item.preparado
         if item.preparado:
             item.preparado_por = request.user
@@ -201,7 +201,7 @@ class PedidoMesaViewSet(viewsets.ModelViewSet):
         serializer.is_valid(raise_exception=True)
         item = pedido.items.filter(pk=serializer.validated_data['item_id']).first()
         if item is None:
-            return Response({"error": "Ítem no encontrado en este pedido."}, status=status.HTTP_404_NOT_FOUND)
+            return Response({"error": "Comanda no encontrada en este pedido."}, status=status.HTTP_404_NOT_FOUND)
         item.persona_asignada = serializer.validated_data['persona_asignada']
         item.save(update_fields=['persona_asignada'])
         _refrescar_cache_items(pedido)

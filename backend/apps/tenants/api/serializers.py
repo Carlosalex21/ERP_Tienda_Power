@@ -377,6 +377,15 @@ class PeriodoSuscripcionSerializer(serializers.Serializer):
     descuento_pct = serializers.IntegerField()
 
 
+class CotizarSuscripcionResponseSerializer(serializers.Serializer):
+    """Monto real que se cobrará por un plan/período, con el crédito por
+    upgrade a mitad de período ya descontado (ver `calcular_monto_a_cobrar`)."""
+    monto = serializers.CharField()
+    credito = serializers.CharField()
+    monto_lista = serializers.CharField()
+    es_upgrade_con_credito = serializers.BooleanField()
+
+
 class SubscriptionPaymentClienteSerializer(serializers.ModelSerializer):
     class Meta:
         model = Client
@@ -391,6 +400,6 @@ class SubscriptionPaymentSerializer(serializers.ModelSerializer):
     class Meta:
         model = SubscriptionPayment
         fields = (
-            'id', 'client', 'plan', 'periodo', 'monto', 'metodo', 'referencia', 'estado',
+            'id', 'client', 'plan', 'periodo', 'monto', 'credito_aplicado', 'metodo', 'referencia', 'estado',
             'fecha_creacion', 'fecha_confirmacion', 'confirmado_por_username', 'notas',
         )
