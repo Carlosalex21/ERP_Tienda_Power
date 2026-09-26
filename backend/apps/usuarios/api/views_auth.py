@@ -15,6 +15,12 @@ from apps.usuarios.services.login_attempt_service import (
     registrar_intento_login,
     usuario_esta_bloqueado,
 )
+from apps.usuarios.services.sesiones_service import (
+    ContrasenaInvalidaError,
+    emitir_sesion,
+    revocar_sesiones,
+    validar_contrasena,
+)
 from .serializers import MyTokenObtainPairSerializer, UserMeSerializer
 
 # Tenant y usuario del demo público enlazado desde la landing ("Probar demo
@@ -191,6 +197,9 @@ class CambiarPasswordView(APIView):
     """
 
     permission_classes = [IsAuthenticated]
+    # Evita probar contraseñas actuales por fuerza bruta con una sesión robada.
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = "password_reset"
 
     def post(self, request):
         actual = request.data.get("password_actual")
@@ -198,11 +207,16 @@ class CambiarPasswordView(APIView):
 
         if not actual or not nueva:
             return error_response([{"code": "required", "detail": "Faltan datos requeridos.", "field": None}])
-        if len(nueva) < 8:
-            return error_response([{"code": "invalid", "detail": "La nueva contraseña debe tener al menos 8 caracteres.", "field": "password_nueva"}])
         if not request.user.check_password(actual):
             return error_response([{"code": "invalid", "detail": "La contraseña actual no es correcta.", "field": "password_actual"}])
+        try:
+            validar_contrasena(nueva, user=request.user)
+        except ContrasenaInvalidaError as e:
+            return error_response([{"code": "invalid", "detail": m, "field": "password_nueva"} for m in e.mensajes])
 
         request.user.set_password(nueva)
         request.user.save(update_fields=["password"])
-        return standard_response(data={"message": "Contraseña actualizada."})
+        # Cierra las sesiones abiertas en OTROS navegadores/dispositivos y le
+        # entrega a este un par nuevo para que siga trabajando sin re-login.
+        revocar_sesiones(request.user)
+        return standard_response(data={"message": "Contraseña actualizada. Se cerraron tus otras sesiones.", **emitir_sesion(request.user)})

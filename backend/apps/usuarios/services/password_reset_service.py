@@ -17,6 +17,7 @@ from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.core.mail import send_mail
 from django.utils.encoding import force_bytes, force_str
 from django.utils.http import urlsafe_base64_decode, urlsafe_base64_encode
+from .sesiones_service import revocar_sesiones
 
 token_generator = PasswordResetTokenGenerator()
 
@@ -67,4 +68,7 @@ def confirmar_reset(uid: str, token: str, nueva_password: str):
 
     user.set_password(nueva_password)
     user.save(update_fields=["password"])
+    # Quien recupera su cuenta por correo probablemente perdió el control de
+    # ella: se cierran todas las sesiones abiertas con la contraseña vieja.
+    revocar_sesiones(user)
     return user

@@ -10,10 +10,22 @@ load_dotenv(dotenv_path=Path(__file__).resolve().parent.parent.parent / '.env', 
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 
-SECRET_KEY = os.getenv("SECRET_KEY", "django-insecure-local-dev-key-123456")
-
 # En producción (Coolify), DEBUG será 'False'.
 DEBUG = os.getenv('DEBUG', 'False') == 'True'
+
+_SECRET_KEY_DESARROLLO = "django-insecure-local-dev-key-123456"
+SECRET_KEY = os.getenv("SECRET_KEY") or _SECRET_KEY_DESARROLLO
+# La SECRET_KEY también firma los JWT (ver SIMPLE_JWT.SIGNING_KEY): con la
+# clave de desarrollo -- pública en este repositorio -- cualquiera podría
+# fabricarse un token de administrador de cualquier tenant. Fuera de DEBUG
+# se exige una clave real en vez de arrancar vulnerable en silencio.
+_ES_COMANDO_DE_TESTS = len(sys.argv) > 1 and sys.argv[1] == "test"
+if not DEBUG and SECRET_KEY == _SECRET_KEY_DESARROLLO and not _ES_COMANDO_DE_TESTS:
+    from django.core.exceptions import ImproperlyConfigured
+    raise ImproperlyConfigured(
+        "Define la variable de entorno SECRET_KEY (y opcionalmente JWT_SIGNING_KEY) con un valor "
+        "aleatorio y secreto antes de arrancar con DEBUG=False."
+    )
 
 # --- Configuración de ALLOWED_HOSTS para Multi-Tenancy ---
 # En desarrollo (DEBUG=True) se permiten todos los hosts para no chocar con
@@ -339,7 +351,9 @@ else:
             'ENGINE': 'django_tenants.postgresql_backend',
             'NAME': 'emp_system_saas', #
             'USER': 'postgres',
-            'PASSWORD': os.getenv('DB_PASSWORD', "carlosalex21"), # CAMBIARLO POR PASSWORD LOCAL
+            # Sin valor por defecto a propósito: una contraseña real no debe
+            # vivir en el repositorio. Defínela en `.env` (DB_PASSWORD=...).
+            'PASSWORD': os.getenv('DB_PASSWORD', ''),
             'HOST': 'localhost',
             'PORT': '5432',
             'CONN_MAX_AGE': 60,

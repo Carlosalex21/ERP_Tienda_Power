@@ -10,6 +10,7 @@ from apps.usuarios.services.password_reset_service import (
     confirmar_reset,
     solicitar_reset,
 )
+from apps.usuarios.services.sesiones_service import ContrasenaInvalidaError, validar_contrasena
 
 
 def _tenant_frontend_url(request) -> str:
@@ -58,8 +59,10 @@ class PasswordResetConfirmView(APIView):
 
         if not all([uid, token, nueva_password]):
             return error_response([{"code": "required", "detail": "Faltan datos requeridos.", "field": None}])
-        if len(nueva_password) < 8:
-            return error_response([{"code": "invalid", "detail": "La contraseña debe tener al menos 8 caracteres.", "field": "new_password"}])
+        try:
+            validar_contrasena(nueva_password)
+        except ContrasenaInvalidaError as e:
+            return error_response([{"code": "invalid", "detail": m, "field": "new_password"} for m in e.mensajes])
 
         try:
             confirmar_reset(uid, token, nueva_password)

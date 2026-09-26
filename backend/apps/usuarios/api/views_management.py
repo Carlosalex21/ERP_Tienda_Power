@@ -4,6 +4,7 @@ from django.db import transaction
 from ..models import UserMetadata
 from .serializers_management import UserManagedSerializer
 from apps.core.permissions import IsTenantAdmin
+from apps.usuarios.services.sesiones_service import revocar_sesiones
 
 class UserManagementViewSet(viewsets.ModelViewSet):
     """
@@ -80,6 +81,10 @@ class UserManagementViewSet(viewsets.ModelViewSet):
         if password:
             user.set_password(password)
         user.save()
+        # Contraseña reseteada o empleado desactivado por el admin: sus
+        # sesiones abiertas no deben sobrevivir al cambio.
+        if password or not user.is_active:
+            revocar_sesiones(user)
 
         for attr, value in validated_data.items():
             setattr(instance, attr, value)
