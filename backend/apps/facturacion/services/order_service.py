@@ -1,7 +1,7 @@
 from django.db import transaction
 from apps.facturacion.models import Factura, Detallefactura
 from django.utils import timezone
-from apps.inventario.models import Producto
+from apps.inventario.models import PresentacionProducto, Producto, Variacionproducto
 from apps.clientes.models import Cliente
 from apps.inventario.services.stock_service import reducir_stock_item
 from apps.configuracion.services.conversion_service import get_tasa_vigente, get_moneda_base, convertir
@@ -15,12 +15,10 @@ def crear_orden_desde_pedido_publico(validated_data, usuario_sistema):
     """
     Crea una Factura y sus detalles a partir de un pedido del catálogo público.
 
-    Los ``items`` traen ``producto_id`` (no ``variacion_id``): el catálogo
-    público (``apps.catalogo_publico``) solo lista productos simples, así
-    que el pedido debe resolver contra ``Producto``, no contra
-    ``Variacionproducto`` -- resolverlo contra la tabla equivocada permitía
-    que un ``id`` de producto coincidiera por accidente con una variante no
-    relacionada, o simplemente fallara siempre con "no existe".
+    Cada ``item`` siempre trae ``producto_id`` (el producto base, tal como lo
+    expone ``PublicProductoSerializer``) y, opcionalmente, ``variante_id``
+    y/o ``presentacion_id`` -- ambos deben pertenecer a ESE producto, si no
+    se rechaza el pedido completo (ver validación abajo).
     """
     # Calienta la tasa de cambio ANTES de abrir la transacción. Para tenants
     # venezolanos, `get_tasa_vigente('USD')` puede disparar (una vez al día,
@@ -79,16 +77,46 @@ def crear_orden_desde_pedido_publico(validated_data, usuario_sistema):
         productos_por_id = {
             p.id: p for p in Producto.objects.select_related('moneda').filter(id__in=producto_ids, disponible_online=True)
         }
+        variante_ids = [item['variante_id'] for item in validated_data['items'] if item.get('variante_id')]
+        variantes_por_id = {v.id: v for v in Variacionproducto.objects.filter(id__in=variante_ids, activo=True)}
+        presentacion_ids = [item['presentacion_id'] for item in validated_data['items'] if item.get('presentacion_id')]
+        presentaciones_por_id = {
+            p.id: p for p in PresentacionProducto.objects.filter(id__in=presentacion_ids, activo=True)
+        }
 
         detalles_a_crear = []
         for item_data in validated_data['items']:
             producto = productos_por_id.get(item_data['producto_id'])
             if producto is None:
                 raise OrderCreationError(f"El producto con ID {item_data['producto_id']} no existe o no está disponible.")
+
+            variante = None
+            variante_id = item_data.get('variante_id')
+            if variante_id:
+                variante = variantes_por_id.get(variante_id)
+                if variante is None or variante.producto_id != producto.id:
+                    raise OrderCreationError(f"La variante seleccionada para '{producto.nombre}' ya no está disponible.")
+
+            presentacion = None
+            presentacion_id = item_data.get('presentacion_id')
+            if presentacion_id:
+                presentacion = presentaciones_por_id.get(presentacion_id)
+                if presentacion is None or presentacion.producto_id != producto.id:
+                    raise OrderCreationError(f"La presentación seleccionada para '{producto.nombre}' ya no está disponible.")
+
+            # Igual que en `afectar_inventario_por_venta`: la presentación
+            # convierte "cuántas de esta presentación" a unidades base antes
+            # de descontar stock; una variante tiene su propio stock directo,
+            # sin conversión (nunca coexisten variante y presentación).
+            item_para_stock = variante if variante is not None else producto
+            cantidad_base = item_data['cantidad']
+            if presentacion is not None:
+                cantidad_base = item_data['cantidad'] * presentacion.factor_conversion
             try:
-                reducir_stock_item(producto, item_data['cantidad'])
+                reducir_stock_item(item_para_stock, cantidad_base)
             except ValueError as e:  # Error de stock insuficiente
                 raise OrderCreationError(str(e))
+
             # `producto.precio` puede estar expresado en la moneda propia del
             # producto (`producto.moneda`), no necesariamente en la moneda
             # base del tenant -- copiarlo tal cual (como antes) dejaba un
@@ -97,14 +125,22 @@ def crear_orden_desde_pedido_publico(validated_data, usuario_sistema):
             # que `recalcular_y_guardar_factura` lo trataba como "ya está en
             # base" y no corregía nada). Si el producto no tiene moneda
             # asignada, ya se asume en la moneda base (mismo criterio que
-            # usa el resto del sistema, ver `Producto.moneda`).
-            precio_unitario = producto.precio or 0
+            # usa el resto del sistema, ver `Producto.moneda`). El precio
+            # base sale de la presentación (si se eligió) o de la variante
+            # (si tiene uno propio) antes de convertir.
+            if presentacion is not None:
+                precio_unitario = presentacion.precio if presentacion.precio is not None else (producto.precio or 0) * presentacion.factor_conversion
+            elif variante is not None and variante.precio is not None:
+                precio_unitario = variante.precio
+            else:
+                precio_unitario = producto.precio or 0
             if producto.moneda_id and producto.moneda.codigo != moneda_base.codigo:
                 precio_unitario = convertir(precio_unitario, producto.moneda.codigo, moneda_base.codigo)
             detalles_a_crear.append(Detallefactura(
                 factura=factura,
                 producto=producto,
-                variante=None,
+                variante=variante,
+                presentacion=presentacion,
                 cantidad=item_data['cantidad'],
                 precio_unitario=precio_unitario,
             ))

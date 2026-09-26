@@ -1,15 +1,28 @@
-import os, base64
 from io import BytesIO
 from xhtml2pdf import pisa
 from django.conf import settings
+from django.core import signing
+from django.core.signing import BadSignature, SignatureExpired
 from django.template.loader import render_to_string
 from django.http import HttpResponse
 from rest_framework.views import APIView
-from rest_framework.permissions import IsAuthenticated
+from rest_framework.permissions import AllowAny, IsAuthenticated
+from rest_framework.response import Response
 from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from apps.facturacion.models import Factura, NotaCredito, NotaDebito
 from apps.configuracion.models import ConfiguracionEmpresa, Moneda
+from apps.core.pdf_utils import obtener_logo_base64 as _obtener_logo_base64
+from apps.core.response import standard_response, error_response
+
+# Firma un `factura_id` para armar un enlace público de solo-lectura al PDF
+# de ESA factura puntual -- para poder mandarlo por WhatsApp (wa.me no
+# soporta adjuntar archivos, solo texto con un link) sin que el cliente
+# tenga que iniciar sesión en el panel. Alcance mínimo a propósito: el
+# firmado NO da acceso a nada más que a "ver este PDF mientras el link no
+# haya expirado" -- no es una sesión, no se puede usar para otra factura.
+_SALT_COMPARTIR_FACTURA = 'facturacion.compartir_factura'
+DIAS_VIGENCIA_LINK_COMPARTIR = 60
 
 
 def _factura_pertenece_al_usuario(user, factura) -> bool:
@@ -29,13 +42,6 @@ def _factura_pertenece_al_usuario(user, factura) -> bool:
     if cliente_b2b is None:
         return True
     return factura is not None and factura.cliente_b2b_id == cliente_b2b.id
-
-
-def _obtener_logo_base64(logo_field):
-    if logo_field and hasattr(logo_field, 'path') and os.path.exists(logo_field.path):
-        with open(logo_field.path, "rb") as f:
-            return f"data:image/png;base64,{base64.b64encode(f.read()).decode()}"
-    return None
 
 
 def _generar_pdf_nota(nota, tipo_documento_label: str, download: bool) -> HttpResponse:
@@ -78,6 +84,51 @@ def _generar_pdf_nota(nota, tipo_documento_label: str, download: bool) -> HttpRe
     return response
 
 
+def _generar_pdf_factura(factura, paper_size: str, download: bool) -> HttpResponse:
+    """Genera el PDF de una Factura (`ticket_template.html`) -- compartido por la vista autenticada y el link público firmado."""
+    empresa_config, _ = ConfiguracionEmpresa.objects.get_or_create(pk=1)
+    logo_base64 = _obtener_logo_base64(empresa_config.logo)
+
+    moneda_base = Moneda.objects.filter(es_predeterminada=True).first()
+    moneda_simbolo = (factura.moneda.simbolo or factura.moneda.codigo) if factura.moneda else (
+        (moneda_base.simbolo or moneda_base.codigo) if moneda_base else ''
+    )
+    mostrar_total_base = bool(factura.moneda and moneda_base and factura.moneda_id != moneda_base.id)
+
+    vendedor = factura.vendedor or factura.usuario
+    vendedor_nombre = (vendedor.get_full_name() or vendedor.username) if vendedor else None
+
+    context = {
+        'factura': factura,
+        'detalles': factura.detalles.all(),
+        'empresa': empresa_config,
+        'logo_base64': logo_base64,
+        'paper_size': paper_size,
+        'moneda_simbolo': moneda_simbolo,
+        'moneda_base_simbolo': (moneda_base.simbolo or moneda_base.codigo) if moneda_base else '',
+        'mostrar_total_base': mostrar_total_base,
+        'vendedor_nombre': vendedor_nombre,
+    }
+
+    html = render_to_string('tickets/ticket_template.html', context)
+    result = BytesIO()
+    pisa.CreatePDF(html, dest=result)
+
+    response = HttpResponse(result.getvalue(), content_type='application/pdf')
+    disposicion = 'attachment' if download else 'inline'
+    nombre_archivo = f"factura_{factura.correlativo or factura.id}.pdf"
+    response['Content-Disposition'] = f'{disposicion}; filename="{nombre_archivo}"'
+    return response
+
+
+def _obtener_factura_para_pdf(factura_id):
+    return Factura.objects.select_related(
+        'cliente', 'usuario', 'vendedor', 'metodo_pago', 'moneda',
+    ).prefetch_related(
+        'detalles__producto', 'detalles__variante',
+    ).get(id=factura_id)
+
+
 class FacturaImprimirView(APIView):
     """
     Genera la factura/ticket en PDF (`xhtml2pdf`, ver
@@ -106,50 +157,67 @@ class FacturaImprimirView(APIView):
     )
     def get(self, request, factura_id):
         try:
-            factura = Factura.objects.select_related(
-                'cliente', 'usuario', 'vendedor', 'metodo_pago', 'moneda',
-            ).prefetch_related(
-                'detalles__producto', 'detalles__variante',
-            ).get(id=factura_id)
+            factura = _obtener_factura_para_pdf(factura_id)
         except Factura.DoesNotExist:
             return HttpResponse("Factura no encontrada", status=404)
 
         if not _factura_pertenece_al_usuario(request.user, factura):
             return HttpResponse("Factura no encontrada", status=404)
 
-        empresa_config, _ = ConfiguracionEmpresa.objects.get_or_create(pk=1)
-        logo_base64 = _obtener_logo_base64(empresa_config.logo)
+        return _generar_pdf_factura(factura, request.GET.get('paper_size', ''), request.GET.get('download') == '1')
 
-        moneda_base = Moneda.objects.filter(es_predeterminada=True).first()
-        moneda_simbolo = (factura.moneda.simbolo or factura.moneda.codigo) if factura.moneda else (
-            (moneda_base.simbolo or moneda_base.codigo) if moneda_base else ''
-        )
-        mostrar_total_base = bool(factura.moneda and moneda_base and factura.moneda_id != moneda_base.id)
 
-        vendedor = factura.vendedor or factura.usuario
-        vendedor_nombre = (vendedor.get_full_name() or vendedor.username) if vendedor else None
+class FacturaLinkCompartirView(APIView):
+    """
+    Genera un enlace público (firmado, sin necesidad de sesión) al PDF de
+    una factura -- para mandarlo por WhatsApp. `wa.me` solo permite
+    pre-llenar TEXTO en el mensaje, nunca adjuntar un archivo, así que la
+    única forma de que el cliente reciba el PDF de verdad es un link que
+    pueda abrir directo desde su teléfono sin tener que iniciar sesión en
+    el panel.
+    """
+    permission_classes = [IsAuthenticated]
 
-        context = {
-            'factura': factura,
-            'detalles': factura.detalles.all(),
-            'empresa': empresa_config,
-            'logo_base64': logo_base64,
-            'paper_size': request.GET.get('paper_size', ''),
-            'moneda_simbolo': moneda_simbolo,
-            'moneda_base_simbolo': (moneda_base.simbolo or moneda_base.codigo) if moneda_base else '',
-            'mostrar_total_base': mostrar_total_base,
-            'vendedor_nombre': vendedor_nombre,
-        }
+    def get(self, request, factura_id):
+        try:
+            factura = Factura.objects.get(id=factura_id)
+        except Factura.DoesNotExist:
+            return error_response([{"code": "not_found", "detail": "Factura no encontrada.", "field": None}], status_code=404)
+        if not _factura_pertenece_al_usuario(request.user, factura):
+            return error_response([{"code": "not_found", "detail": "Factura no encontrada.", "field": None}], status_code=404)
 
-        html = render_to_string('tickets/ticket_template.html', context)
-        result = BytesIO()
-        pisa.CreatePDF(html, dest=result)
+        token = signing.dumps({'factura_id': factura.id}, salt=_SALT_COMPARTIR_FACTURA)
+        base_url = f"{request.scheme}://{request.get_host()}"
+        return standard_response(data={'url': f"{base_url}/api/v1/facturacion/compartir/{token}/"})
 
-        response = HttpResponse(result.getvalue(), content_type='application/pdf')
-        disposicion = 'attachment' if request.GET.get('download') == '1' else 'inline'
-        nombre_archivo = f"factura_{factura.correlativo or factura.id}.pdf"
-        response['Content-Disposition'] = f'{disposicion}; filename="{nombre_archivo}"'
-        return response
+
+class FacturaCompartirPublicoView(APIView):
+    """
+    Sirve el PDF de una factura a partir de un link firmado (ver
+    `FacturaLinkCompartirView`) -- sin autenticación, pensado para que el
+    cliente lo abra desde WhatsApp en su teléfono. El token solo sirve para
+    ESA factura puntual y expira solo (`DIAS_VIGENCIA_LINK_COMPARTIR`); no
+    es una sesión ni da acceso a nada más del panel.
+    """
+    permission_classes = [AllowAny]
+
+    def get(self, request, token):
+        try:
+            data = signing.loads(
+                token, salt=_SALT_COMPARTIR_FACTURA,
+                max_age=60 * 60 * 24 * DIAS_VIGENCIA_LINK_COMPARTIR,
+            )
+        except SignatureExpired:
+            return HttpResponse("Este enlace ya venció.", status=410)
+        except BadSignature:
+            return HttpResponse("Enlace inválido.", status=400)
+
+        try:
+            factura = _obtener_factura_para_pdf(data['factura_id'])
+        except Factura.DoesNotExist:
+            return HttpResponse("Factura no encontrada", status=404)
+
+        return _generar_pdf_factura(factura, '', download=False)
 
 
 class NotaCreditoImprimirView(APIView):

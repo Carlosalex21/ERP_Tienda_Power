@@ -10,7 +10,7 @@ from drf_spectacular.views import (
 )
 from apps.tenants.api.views_subscription import (
     TenantProfileView, PlanViewSet, PeriodosSuscripcionView, PlatformPaymentInfoView,
-    CrearPagoSuscripcionDesdeAdminView, TasaBcvPlataformaView,
+    CrearPagoSuscripcionDesdeAdminView, TasaBcvPlataformaView, ReferidoProgramaView,
 )
 
 urlpatterns = [
@@ -38,6 +38,8 @@ urlpatterns = [
     path('api/v1/farmacia/', include('apps.farmacia.urls')),
     path('api/v1/servicios/', include('apps.servicios.urls')),
     path('api/v1/contabilidad/', include('apps.contabilidad.urls')),
+    path('api/v1/crm/', include('apps.crm.urls')),
+    path('api/v1/postventa/', include('apps.postventa.urls')),
     path('api/v1/reportes/', include('apps.reportes.urls')),
     # Endpoint para que el frontend obtenga el perfil del tenant actual
     path('api/v1/tenants/profile/', TenantProfileView.as_view(), name='tenant-profile'),
@@ -51,6 +53,7 @@ urlpatterns = [
     path('api/v1/tenants/payment-info/', PlatformPaymentInfoView.as_view(), name='tenant-payment-info'),
     path('api/v1/tenants/tasa-bcv/', TasaBcvPlataformaView.as_view(), name='tenant-tasa-bcv'),
     path('api/v1/tenants/pagos-suscripcion-admin/', CrearPagoSuscripcionDesdeAdminView.as_view(), name='tenant-crear-pago-suscripcion'),
+    path('api/v1/tenants/referidos/', ReferidoProgramaView.as_view(), name='tenant-referidos'),
     path('api/v1/configuracion/', include('apps.configuracion.urls')),
     path('api/v1/auditoria/', include('apps.auditoria.urls')),
     path('api/v1/clientes/', include('apps.clientes.urls')),

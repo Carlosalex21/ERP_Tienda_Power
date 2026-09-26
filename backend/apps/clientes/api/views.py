@@ -8,7 +8,26 @@ from apps.core.permissions import IsTenantAdmin, IsAdminOrVendedor
 from apps.core.response import standard_response
 from apps.clientes.models import Cliente
 from apps.clientes.services.cliente_bulk_service import procesar_carga_masiva_clientes, ClienteBulkUploadError
+from apps.clientes.tipos_documento import obtener_tipos_documento
+from apps.configuracion.core.config_service import obtener_pais_tenant
 from .serializers import ClienteSerializer, ClienteBulkUploadSerializer
+
+
+class TiposDocumentoView(APIView):
+    """
+    Tipos de documento de identidad válidos para el país del tenant (ej.
+    V/E/J/G en Venezuela) -- antes el campo era de texto libre en el
+    formulario, así que el cajero podía escribir cualquier cosa en vez de
+    elegir entre las opciones reales del país.
+    """
+    permission_classes = [IsAdminOrVendedor]
+
+    def get(self, request):
+        pais_codigo = obtener_pais_tenant()
+        return standard_response(data={
+            'pais_codigo': pais_codigo,
+            'tipos_documento': obtener_tipos_documento(pais_codigo),
+        })
 
 class ClienteListCreateView(generics.ListCreateAPIView):
     """

@@ -52,7 +52,7 @@
 
   <table class="datos-factura">
     <tr>
-      <td class="bold">{% if factura.estado == 'pendiente' %}PEDIDO{% else %}FACTURA{% endif %}</td>
+      <td class="bold">{% if factura.estado == 'nota_entrega' %}NOTA DE ENTREGA{% elif factura.estado == 'pendiente' %}PEDIDO{% else %}FACTURA{% endif %}</td>
       <td class="right">{{ factura.correlativo|default:"S/N" }}</td>
     </tr>
     {% if factura.numero_control %}
@@ -69,7 +69,12 @@
     {% if factura.metodo_pago %}
     <tr><td class="muted">M&eacute;todo de pago</td><td class="right">{{ factura.metodo_pago.nombre }}</td></tr>
     {% endif %}
+    {% if factura.estado != 'nota_entrega' %}
+    {# Una nota de entrega todavía no define condición de pago en firme --
+       se decide recién al convertirla en factura (ver `convertir_a_factura`)
+       -- mostrarla aquí confundía, pareciendo una condición ya fiscal. #}
     <tr><td class="muted">Condici&oacute;n de pago</td><td class="right">{% if factura.condicion_pago == 'credito' %}Cr&eacute;dito{% else %}Contado{% endif %}</td></tr>
+    {% endif %}
     {% if vendedor_nombre %}
     <tr><td class="muted">Vendedor</td><td class="right">{{ vendedor_nombre }}</td></tr>
     {% endif %}

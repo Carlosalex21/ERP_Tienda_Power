@@ -1,7 +1,7 @@
 from django.db import models
 from django.contrib.auth.models import User
 from django.utils import timezone
-from apps.rrhh.models import Sucursal # Importamos el modelo Sucursal
+from apps.rrhh.models import Sucursal, Departamento # Importamos el modelo Sucursal
 
 class Rol(models.Model):
     # Código estable para autorización (ver apps.core.permissions). A
@@ -71,12 +71,21 @@ class UserMetadata(models.Model):
         verbose_name="Rol"
     )
     sucursal = models.ForeignKey(
-        Sucursal, 
-        on_delete=models.SET_NULL, 
+        Sucursal,
+        on_delete=models.SET_NULL,
         null=True, blank=True,
         verbose_name="Sucursal Asignada"
     )
-    
+    # Equipo/área de trabajo (Cocina, Almacén, Taller...) -- ver
+    # `apps.rrhh.models.Departamento`. Un empleado puede no pertenecer a
+    # ninguno (rol puramente administrativo/ventas).
+    departamento = models.ForeignKey(
+        Departamento,
+        on_delete=models.SET_NULL,
+        null=True, blank=True,
+        verbose_name="Departamento",
+    )
+
     # Datos de Contacto y Personales
     telefono = models.CharField(max_length=15, blank=True, null=True, verbose_name="Teléfono")
     direccion = models.TextField(blank=True, null=True, verbose_name="Dirección")
@@ -100,6 +109,15 @@ class UserMetadata(models.Model):
         verbose_name="Número de Empleado"
     )
     fecha_contratacion = models.DateField(null=True, blank=True, verbose_name="Fecha de Contratación")
+    # Sueldo del empleado para el período que la empresa elija al generar la
+    # nómina (ver `apps.rrhh.services.generar_periodo_nomina`) -- no fuerza
+    # una cadencia (mensual/quincenal) fija, ya que eso lo define el rango
+    # de fechas del período mismo, no este campo. `null` = no participa en
+    # nómina (ej. un dueño que no se paga sueldo formal).
+    sueldo_base = models.DecimalField(
+        max_digits=12, decimal_places=2, null=True, blank=True,
+        verbose_name="Sueldo Base", help_text="Monto a pagar por período de nómina. Vacío = no participa en nómina.",
+    )
     almacen_asignado = models.ForeignKey(
         'inventario.Almacen', 
         on_delete=models.SET_NULL, 

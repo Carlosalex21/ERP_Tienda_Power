@@ -35,7 +35,7 @@ class EmpresaContableSerializer(serializers.ModelSerializer):
 class CuentaContableSerializer(serializers.ModelSerializer):
     class Meta:
         model = CuentaContable
-        fields = ('id', 'empresa', 'codigo', 'nombre', 'tipo', 'naturaleza', 'cuenta_padre', 'acepta_movimiento', 'activo')
+        fields = ('id', 'empresa', 'codigo', 'nombre', 'tipo', 'naturaleza', 'rol', 'cuenta_padre', 'acepta_movimiento', 'activo')
         read_only_fields = ('naturaleza',)
 
     def validate(self, attrs):

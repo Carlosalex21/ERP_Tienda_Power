@@ -17,7 +17,7 @@ from decimal import Decimal
 import stripe
 from django.utils import timezone
 
-from apps.tenants.models import Client, Plan, PlatformPaymentConfig, SubscriptionPayment
+from apps.tenants.models import Client, Plan, PlatformPaymentConfig, Referido, SubscriptionPayment
 from apps.tenants.services.subscription_service import SubscriptionService
 
 # Países que pagan de forma manual (Pago Móvil/Zelle). El resto paga con Stripe.
@@ -155,7 +155,34 @@ def confirmar_pago(pago_id: int, admin_user=None, notas: str = '') -> Subscripti
     SubscriptionService.create_subscription(
         client_id=pago.client_id, plan_id=pago.plan_id, duration_days=duration_days,
     )
+    _recompensar_referido_si_aplica(pago.client_id)
     return pago
+
+
+def _recompensar_referido_si_aplica(client_id: int) -> None:
+    """
+    Si `client_id` fue invitado por otro tenant (ver `Referido`) y esta es
+    la primera vez que confirma un pago real, regala `meses_bonus` de
+    suscripción gratis A AMBOS (referente y referido). El `estado` del
+    `Referido` pasa a 'recompensado' de una vez, así que renovaciones
+    futuras de este mismo cliente nunca vuelven a disparar la recompensa.
+
+    Aislado con try/except: un fallo aquí jamás debe poder tumbar la
+    confirmación de un pago real, que ya se guardó antes de llegar a esto.
+    """
+    try:
+        referido = Referido.objects.select_related('referente').get(referido_id=client_id, estado='pendiente')
+    except Referido.DoesNotExist:
+        return
+    try:
+        SubscriptionService.otorgar_meses_bonus(referido.referente_id, referido.meses_bonus)
+        SubscriptionService.otorgar_meses_bonus(referido.referido_id, referido.meses_bonus)
+        referido.estado = 'recompensado'
+        referido.fecha_recompensa = timezone.now()
+        referido.save(update_fields=['estado', 'fecha_recompensa'])
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('No se pudo otorgar la recompensa de referido para el tenant %s', client_id, exc_info=True)
 
 
 def rechazar_pago(pago_id: int, admin_user=None, motivo: str = '') -> SubscriptionPayment:

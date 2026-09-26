@@ -95,6 +95,10 @@ REST_FRAMEWORK = {
         'demo_login': os.getenv('THROTTLE_DEMO_LOGIN', '10/min'),
         'catalogo': os.getenv('THROTTLE_CATALOGO', '300/min'),
         'password_reset': os.getenv('THROTTLE_PASSWORD_RESET', '5/min'),
+        # Anti fuerza bruta sobre un PIN corto (4-6 dígitos, ~10000 combinaciones):
+        # sin esto, un cajero (usuario ya autenticado, no un anónimo) podría
+        # probar miles de PINes por minuto hasta acertar.
+        'pin_autorizacion': os.getenv('THROTTLE_PIN_AUTORIZACION', '10/min'),
     },
 }
 
@@ -105,7 +109,13 @@ REST_FRAMEWORK = {
 
 # Aplicaciones Compartidas (Esquema 'public')
 SHARED_APPS = [
-    'django_tenants', 
+    # 'daphne' PRIMERO a propósito: reemplaza el comando `runserver` por uno
+    # consciente de ASGI/WebSockets (necesario para poder probar los
+    # consumers de Channels con `manage.py runserver` en desarrollo, igual
+    # que en producción, que corre Daphne de verdad -- ver `deploy/`).
+    'daphne',
+    'channels',
+    'django_tenants',
     'drf_spectacular',
 
     # Apps de Django globales
@@ -152,6 +162,8 @@ TENANT_APPS = [
     'apps.farmacia',
     'apps.servicios',
     'apps.contabilidad',
+    'apps.crm',
+    'apps.postventa',
 
     # Si 'erp' y 'tienda' aún tienen modelos viejos, déjalos aquí temporalmente
     #'erp',
@@ -271,6 +283,17 @@ JWT_COOKIE_SECURE = os.getenv('JWT_COOKIE_SECURE', 'False') == 'True'
 JWT_COOKIE_SAMESITE = os.getenv('JWT_COOKIE_SAMESITE', 'Lax')
 JWT_COOKIE_HTTPONLY = os.getenv('JWT_COOKIE_HTTPONLY', 'True') == 'True'
 
+# --- Web Push (notificaciones al staff de restaurante -- "llaman al
+# mesero"/"piden la cuenta" -- ver apps.restaurantes.push_notifications) ---
+# El par de llaves VAPID identifica a ESTE servidor ante los servicios de
+# push de cada navegador (Chrome/Firefox/etc.) -- no son secretas de la
+# misma forma que una contraseña, pero la privada nunca debe salir del
+# backend. Sin ellas configuradas, el envío de push simplemente se omite
+# (fail-open, igual que el resto de este side-effect -- ver esa función).
+VAPID_PRIVATE_KEY_PEM_B64 = os.getenv('VAPID_PRIVATE_KEY_PEM_B64', '')
+VAPID_PUBLIC_KEY = os.getenv('VAPID_PUBLIC_KEY', '')
+VAPID_SUBJECT = os.getenv('VAPID_SUBJECT', 'mailto:soporte@erpsystem.local')
+
 
 TEMPLATES = [
     {
@@ -289,6 +312,7 @@ TEMPLATES = [
 ]
 
 WSGI_APPLICATION = "backend.wsgi.application"
+ASGI_APPLICATION = "backend.asgi.application"
 
 
 # BASE DE DATOS (Multi-Tenant)
@@ -405,6 +429,29 @@ else:
         },
     }
 
+# --- Channel layer (Django Channels / WebSockets) ---
+# Mismo criterio que CACHES arriba: con REDIS_URL configurado (siempre en
+# producción, ver docker-compose.prod.yml) los mensajes se reparten por Redis
+# -- necesario porque cada worker de Daphne/gunicorn es un proceso separado y
+# `group_send` tiene que llegarle a la conexión que corresponda esté en el
+# proceso que esté. Sin Redis (dev local sin nada instalado), se usa el canal
+# en memoria: funciona perfecto para un solo proceso de `runserver`, pero
+# NUNCA debe usarse en producción con más de un worker (los mensajes no
+# cruzan procesos).
+if REDIS_URL:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels_redis.core.RedisChannelLayer',
+            'CONFIG': {'hosts': [REDIS_URL]},
+        },
+    }
+else:
+    CHANNEL_LAYERS = {
+        'default': {
+            'BACKEND': 'channels.layers.InMemoryChannelLayer',
+        },
+    }
+
 # TTLs específicos para distintos tipos de contenido cacheable
 CACHE_TTL = {
     'catalogo_productos': int(os.getenv('CACHE_TTL_CATALOGO', '300')),
@@ -431,6 +478,16 @@ CELERY_TASK_SERIALIZER = 'json'
 CELERY_RESULT_SERIALIZER = 'json'
 CELERY_TIMEZONE = TIME_ZONE
 CELERY_TASK_TRACK_STARTED = True
+
+# Horario fijo en código (no `django_celery_beat`, pensado para un solo
+# schema) -- lo dispara el proceso "celery-beat" (ver `docker-entrypoint.sh`
+# y `docker-compose.prod.yml`), la tarea misma recorre todos los tenants.
+CELERY_BEAT_SCHEDULE = {
+    'digest-alertas-urgentes': {
+        'task': 'apps.reportes.tasks.enviar_digest_alertas_urgentes',
+        'schedule': 3600.0,  # cada hora -- la tarea decide sola si ya avisó a este tenant hoy.
+    },
+}
 
 # =========================================================
 # SPECTACULAR (Swagger / OpenAPI 3)

@@ -7,6 +7,9 @@ from .api.views import (
     PedidoMesaPublicoView,
     LlamarMeseroPublicoView,
     PedirCuentaPublicoView,
+    AsignarPersonaItemPublicoView,
+    SubirComprobantePagoPublicoView,
+    PushSubscriptionView,
 )
 
 router = DefaultRouter()
@@ -18,6 +21,10 @@ urlpatterns = [
     path('publico/<str:token>/', PedidoMesaPublicoView.as_view(), name='pedido-mesa-publico'),
     path('publico/<str:token>/llamar-mesero/', LlamarMeseroPublicoView.as_view(), name='pedido-mesa-llamar-mesero'),
     path('publico/<str:token>/pedir-cuenta/', PedirCuentaPublicoView.as_view(), name='pedido-mesa-pedir-cuenta'),
+    path('publico/<str:token>/asignar-persona/', AsignarPersonaItemPublicoView.as_view(), name='pedido-mesa-asignar-persona'),
+    path('publico/<str:token>/comprobante-pago/', SubirComprobantePagoPublicoView.as_view(), name='pedido-mesa-comprobante-pago'),
+
+    path('push-subscriptions/', PushSubscriptionView.as_view(), name='push-subscription'),
 
     path('', include(router.urls)),
 ]

@@ -64,6 +64,7 @@ class ProductoSerializer(serializers.ModelSerializer):
     presentaciones = PresentacionProductoSerializer(many=True, read_only=True)
     moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True, default=None)
     moneda_simbolo = serializers.CharField(source='moneda.simbolo', read_only=True, default=None)
+    departamento_nombre = serializers.CharField(source='departamento.nombre', read_only=True, default=None)
 
     class Meta:
         model = Producto
@@ -87,6 +88,10 @@ class ProductoSerializer(serializers.ModelSerializer):
         return super().create(validated_data)
 
 class InventarioSerializer(serializers.ModelSerializer):
+    """Desglose de stock por almacén -- ver `apps.inventario.services.stock_service.crear_y_aplicar_traslado`, que es lo único que hoy mantiene `cantidad` al día junto con los Ajustes."""
+    producto_nombre = serializers.CharField(source='producto.nombre', read_only=True, default=None)
+    almacen_nombre = serializers.CharField(source='almacen.nombre', read_only=True, default=None)
+
     class Meta:
         model = Inventario
         fields = '__all__'

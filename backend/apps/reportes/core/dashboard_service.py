@@ -184,21 +184,27 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
     bajo_stock_total = bajo_stock_qs.count()
     bajo_stock = list(bajo_stock_qs.values('nombre', 'cantidad')[:5])
 
-    # 6. Valor de inventario: precio × cantidad de cada producto activo. Para
-    # productos de tipo 'variable' el precio/cantidad reales viven en cada
-    # variante, no en el producto padre -- se suman ambas fuentes para no
-    # subestimar el valor de un catálogo con productos variables.
+    # 6. Valor de inventario: COSTO (`costo_promedio`) × cantidad de cada
+    # producto activo -- no `precio` (precio de VENTA al público). Antes se
+    # usaba `precio`, lo que en realidad calculaba "cuánto valdría el
+    # inventario si se vendiera todo hoy" en vez de "cuánto costó lo que
+    # tengo en stock" (que es lo que la propia tarjeta del dashboard dice
+    # mostrar: "Costo total de tu stock actual") -- con productos de buen
+    # margen esto inflaba el valor mostrado varias veces por encima del
+    # real. Para productos de tipo 'variable' el costo/cantidad reales viven
+    # en cada variante, no en el producto padre -- se suman ambas fuentes
+    # para no subestimar el valor de un catálogo con productos variables.
     from apps.inventario.models import Variacionproducto
 
     valor_productos_simples = Producto.objects.filter(activo=True).exclude(tipo='variable').aggregate(
         valor=Coalesce(
-            Sum(F('precio') * F('cantidad'), output_field=DecimalField()),
+            Sum(F('costo_promedio') * F('cantidad'), output_field=DecimalField()),
             Decimal('0.0'),
         )
     )['valor']
     valor_variantes = Variacionproducto.objects.filter(producto__activo=True).aggregate(
         valor=Coalesce(
-            Sum(F('precio') * F('cantidad'), output_field=DecimalField()),
+            Sum(F('costo_promedio') * F('cantidad'), output_field=DecimalField()),
             Decimal('0.0'),
         )
     )['valor']

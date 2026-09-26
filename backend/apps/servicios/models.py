@@ -28,6 +28,13 @@ class OrdenServicio(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True,
         related_name='ordenes_servicio_asignadas',
     )
+    # Alternativa/complemento a `tecnico`: asignar la orden a un EQUIPO
+    # (ver `apps.rrhh.models.Departamento`) en vez de a una persona puntual
+    # -- útil cuando cualquiera del taller puede tomarla, no solo un técnico
+    # nombrado que puede estar de vacaciones/ausente.
+    departamento = models.ForeignKey(
+        'rrhh.Departamento', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
     costo_estimado = models.DecimalField(max_digits=10, decimal_places=2, null=True, blank=True)
     # Se llena recién al cerrar/cobrar la orden (ver `apps.servicios.services.cerrar_orden_servicio`).
     factura = models.OneToOneField(

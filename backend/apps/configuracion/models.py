@@ -68,6 +68,22 @@ class ConfiguracionCorrelativo(models.Model):
         default=8, verbose_name="Longitud del Número de Control (Nota de Débito)",
     )
 
+    # --- Correlativo de Nota de Entrega ---
+    # Simple, no fiscal (una nota de entrega todavía no es un comprobante
+    # fiscal -- ver `apps.facturacion.services.nota_entrega_service`, se
+    # convierte en factura real recién al confirmarse el cobro/crédito). Sin
+    # esto, una nota de entrega quedaba sin ningún número mientras estuviera
+    # en ese estado -- imposible referenciarla al imprimirla o en el listado.
+    prefijo_nota_entrega = models.CharField(
+        max_length=10, default="NE-", verbose_name="Prefijo Nota de Entrega",
+    )
+    current_number_nota_entrega = models.IntegerField(
+        default=0, verbose_name="Número Actual (Nota de Entrega)",
+    )
+    number_length_nota_entrega = models.IntegerField(
+        default=3, verbose_name="Longitud del Número (Nota de Entrega)",
+    )
+
     class Meta:
         db_table = 'ConfiguracionCorrelativo'
         verbose_name = "Configuración de Correlativo"
@@ -97,6 +113,34 @@ class ConfiguracionEmpresa(models.Model):
     pais_codigo = models.CharField(
         max_length=2, choices=PAIS_CHOICES, default='VE', verbose_name="País",
         help_text="País fiscal del tenant. Determina qué TaxStrategy (apps.configuracion.core.tax_strategy) se aplica por defecto.",
+    )
+    # Control de autorización para eliminar renglones (ej. un cajero
+    # quitando un producto ya agregado al POS) -- apagado por defecto, el
+    # admin lo activa si su negocio lo necesita. El PIN se guarda hasheado
+    # (igual que una contraseña, ver `apps.configuracion.services.pin_service`)
+    # -- nunca en texto plano, y nunca se devuelve en ninguna respuesta.
+    requiere_pin_eliminar = models.BooleanField(
+        default=False,
+        verbose_name="Exigir PIN para eliminar renglones",
+        help_text="Si está activo, eliminar un renglón (ítem del POS, de una mesa, etc.) exige este PIN antes de aplicarse -- para negocios que no dejan al cajero quitar un producto sin autorización.",
+    )
+    pin_autorizacion_hash = models.CharField(max_length=128, blank=True, null=True, verbose_name="PIN de autorización (hash)")
+    # Mensaje que acompaña el link de WhatsApp al cerrar una venta -- cada
+    # negocio quiere su propio tono/despedida. El link al PDF (ver
+    # `apps.facturacion.api.views_impresion.FacturaLinkCompartirView`) NO
+    # es parte de esta plantilla a propósito: el frontend siempre lo agrega
+    # al final del mensaje ya armado (`utils/whatsapp.ts`), así que no hay
+    # forma de configurar un mensaje que "olvide" mandar la factura --
+    # wa.me no permite adjuntar el PDF directamente, el link es la única
+    # manera de que en verdad le llegue.
+    MENSAJE_WHATSAPP_VENTA_DEFAULT = "Hola {cliente}, gracias por tu compra{factura}. Total: {moneda} {total}. ¡Que la disfrutes!"
+    mensaje_whatsapp_venta = models.TextField(
+        blank=True, default=MENSAJE_WHATSAPP_VENTA_DEFAULT,
+        verbose_name="Mensaje de WhatsApp al cerrar una venta",
+        help_text=(
+            "Variables disponibles: {cliente}, {factura} (correlativo entre paréntesis, o vacío), "
+            "{total}, {moneda}. El link al PDF de la factura se agrega siempre al final, no se configura aquí."
+        ),
     )
 
     class Meta:

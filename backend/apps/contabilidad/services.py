@@ -26,52 +26,55 @@ NATURALEZA_POR_TIPO = {
 # Plan de cuentas base (esqueleto genérico LatAm) que se siembra al crear una
 # empresa contable, para que el contador no arranque de una pantalla vacía
 # sin saber por dónde empezar -- puede agregar/editar cuentas libremente
-# después, esto es solo un punto de partida razonable.
+# después, esto es solo un punto de partida razonable. Las cuentas "clave"
+# (Caja, Inventario, Costo de Venta, etc.) llevan un `rol` -- así los
+# asientos automáticos de venta/ajuste de inventario las encuentran solas,
+# sin que nadie tenga que configurar nada a mano (ver `obtener_cuenta_por_rol`).
 PLAN_CUENTAS_DEFAULT = [
-    # (codigo, nombre, tipo, acepta_movimiento, codigo_padre)
-    ('1', 'ACTIVO', 'activo', False, None),
-    ('1.1', 'Activo Corriente', 'activo', False, '1'),
-    ('1.1.01', 'Caja', 'activo', True, '1.1'),
-    ('1.1.02', 'Bancos', 'activo', True, '1.1'),
-    ('1.1.03', 'Cuentas por Cobrar Clientes', 'activo', True, '1.1'),
-    ('1.1.04', 'Inventario', 'activo', True, '1.1'),
-    ('1.1.05', 'IVA Crédito Fiscal', 'activo', True, '1.1'),
-    ('1.2', 'Activo No Corriente', 'activo', False, '1'),
-    ('1.2.01', 'Mobiliario y Equipos', 'activo', True, '1.2'),
-    ('1.2.02', 'Depreciación Acumulada', 'activo', True, '1.2'),
-    ('2', 'PASIVO', 'pasivo', False, None),
-    ('2.1', 'Pasivo Corriente', 'pasivo', False, '2'),
-    ('2.1.01', 'Cuentas por Pagar Proveedores', 'pasivo', True, '2.1'),
-    ('2.1.02', 'IVA Débito Fiscal', 'pasivo', True, '2.1'),
-    ('2.1.03', 'Retenciones por Pagar', 'pasivo', True, '2.1'),
-    ('2.1.04', 'Sueldos y Salarios por Pagar', 'pasivo', True, '2.1'),
-    ('3', 'PATRIMONIO', 'patrimonio', False, None),
-    ('3.1', 'Capital Social', 'patrimonio', True, '3'),
-    ('3.2', 'Utilidades Retenidas', 'patrimonio', True, '3'),
-    ('3.3', 'Utilidad del Ejercicio', 'patrimonio', True, '3'),
-    ('4', 'INGRESOS', 'ingreso', False, None),
-    ('4.1', 'Ingresos por Ventas', 'ingreso', True, '4'),
-    ('4.2', 'Ingresos por Honorarios', 'ingreso', True, '4'),
-    ('4.3', 'Otros Ingresos', 'ingreso', True, '4'),
-    ('5', 'COSTOS', 'costo', False, None),
-    ('5.1', 'Costo de Ventas', 'costo', True, '5'),
-    ('6', 'GASTOS', 'gasto', False, None),
-    ('6.1', 'Gastos de Administración', 'gasto', False, '6'),
-    ('6.1.01', 'Sueldos y Salarios', 'gasto', True, '6.1'),
-    ('6.1.02', 'Alquiler', 'gasto', True, '6.1'),
-    ('6.1.03', 'Servicios (Luz, Agua, Internet)', 'gasto', True, '6.1'),
-    ('6.1.04', 'Honorarios Profesionales', 'gasto', True, '6.1'),
-    ('6.1.05', 'Depreciación', 'gasto', True, '6.1'),
-    ('6.2', 'Gastos de Venta', 'gasto', False, '6'),
-    ('6.2.01', 'Publicidad y Mercadeo', 'gasto', True, '6.2'),
-    ('6.3', 'Gastos Financieros', 'gasto', False, '6'),
-    ('6.3.01', 'Comisiones e Intereses Bancarios', 'gasto', True, '6.3'),
+    # (codigo, nombre, tipo, acepta_movimiento, codigo_padre, rol)
+    ('1', 'ACTIVO', 'activo', False, None, None),
+    ('1.1', 'Activo Corriente', 'activo', False, '1', None),
+    ('1.1.01', 'Caja', 'activo', True, '1.1', 'caja'),
+    ('1.1.02', 'Bancos', 'activo', True, '1.1', 'banco'),
+    ('1.1.03', 'Cuentas por Cobrar Clientes', 'activo', True, '1.1', 'cuentas_por_cobrar'),
+    ('1.1.04', 'Inventario', 'activo', True, '1.1', 'inventario'),
+    ('1.1.05', 'IVA Crédito Fiscal', 'activo', True, '1.1', 'iva_por_cobrar'),
+    ('1.2', 'Activo No Corriente', 'activo', False, '1', None),
+    ('1.2.01', 'Mobiliario y Equipos', 'activo', True, '1.2', None),
+    ('1.2.02', 'Depreciación Acumulada', 'activo', True, '1.2', None),
+    ('2', 'PASIVO', 'pasivo', False, None, None),
+    ('2.1', 'Pasivo Corriente', 'pasivo', False, '2', None),
+    ('2.1.01', 'Cuentas por Pagar Proveedores', 'pasivo', True, '2.1', 'cuentas_por_pagar'),
+    ('2.1.02', 'IVA Débito Fiscal', 'pasivo', True, '2.1', 'iva_por_pagar'),
+    ('2.1.03', 'Retenciones por Pagar', 'pasivo', True, '2.1', None),
+    ('2.1.04', 'Sueldos y Salarios por Pagar', 'pasivo', True, '2.1', None),
+    ('3', 'PATRIMONIO', 'patrimonio', False, None, None),
+    ('3.1', 'Capital Social', 'patrimonio', True, '3', None),
+    ('3.2', 'Utilidades Retenidas', 'patrimonio', True, '3', None),
+    ('3.3', 'Utilidad del Ejercicio', 'patrimonio', True, '3', None),
+    ('4', 'INGRESOS', 'ingreso', False, None, None),
+    ('4.1', 'Ingresos por Ventas', 'ingreso', True, '4', 'ventas'),
+    ('4.2', 'Ingresos por Honorarios', 'ingreso', True, '4', None),
+    ('4.3', 'Otros Ingresos', 'ingreso', True, '4', 'otros_ingresos'),
+    ('5', 'COSTOS', 'costo', False, None, None),
+    ('5.1', 'Costo de Ventas', 'costo', True, '5', 'costo_venta'),
+    ('6', 'GASTOS', 'gasto', False, None, None),
+    ('6.1', 'Gastos de Administración', 'gasto', False, '6', None),
+    ('6.1.01', 'Sueldos y Salarios', 'gasto', True, '6.1', 'gasto_sueldos'),
+    ('6.1.02', 'Alquiler', 'gasto', True, '6.1', None),
+    ('6.1.03', 'Servicios (Luz, Agua, Internet)', 'gasto', True, '6.1', None),
+    ('6.1.04', 'Honorarios Profesionales', 'gasto', True, '6.1', None),
+    ('6.1.05', 'Depreciación', 'gasto', True, '6.1', None),
+    ('6.2', 'Gastos de Venta', 'gasto', False, '6', None),
+    ('6.2.01', 'Publicidad y Mercadeo', 'gasto', True, '6.2', None),
+    ('6.3', 'Gastos Financieros', 'gasto', False, '6', None),
+    ('6.3.01', 'Comisiones e Intereses Bancarios', 'gasto', True, '6.3', None),
 ]
 
 
 def seed_plan_cuentas_default(empresa: EmpresaContable) -> None:
     por_codigo: dict[str, CuentaContable] = {}
-    for codigo, nombre, tipo, acepta_movimiento, codigo_padre in PLAN_CUENTAS_DEFAULT:
+    for codigo, nombre, tipo, acepta_movimiento, codigo_padre, rol in PLAN_CUENTAS_DEFAULT:
         cuenta = CuentaContable.objects.create(
             empresa=empresa,
             codigo=codigo,
@@ -80,8 +83,46 @@ def seed_plan_cuentas_default(empresa: EmpresaContable) -> None:
             naturaleza=NATURALEZA_POR_TIPO[tipo],
             acepta_movimiento=acepta_movimiento,
             cuenta_padre=por_codigo.get(codigo_padre) if codigo_padre else None,
+            rol=rol,
         )
         por_codigo[codigo] = cuenta
+
+
+def obtener_cuenta_por_rol(empresa: EmpresaContable, rol: str) -> CuentaContable | None:
+    """La cuenta activa de esta empresa etiquetada con ese `rol` de negocio, si existe."""
+    return CuentaContable.objects.filter(
+        empresa=empresa, rol=rol, acepta_movimiento=True, activo=True,
+    ).order_by('id').first()
+
+
+def obtener_o_crear_empresa_propia(nombre: str | None = None, identificacion_fiscal: str | None = None) -> EmpresaContable:
+    """
+    Devuelve la `EmpresaContable` que representa al propio tenant
+    (`es_negocio_propio=True`), creándola (con su plan de cuentas y sus
+    cuentas por defecto ya resueltas por `rol`) si todavía no existe.
+
+    Esto es lo que hace que CUALQUIER tenant -- no solo los del vertical
+    'contador' -- tenga su contabilidad llevándose sola desde su primera
+    venta: no hace falta que nadie entre a "crear una empresa contable" ni
+    configure cuentas a mano antes de que el sistema pueda generar su primer
+    asiento automático.
+    """
+    empresa = EmpresaContable.objects.filter(es_negocio_propio=True).order_by('id').first()
+    if empresa is not None:
+        return empresa
+
+    empresa = EmpresaContable.objects.create(
+        nombre=nombre or 'Mi Empresa',
+        identificacion_fiscal=identificacion_fiscal,
+        es_negocio_propio=True,
+        activo=True,
+    )
+    seed_plan_cuentas_default(empresa)
+    empresa.cuenta_cobro_default = obtener_cuenta_por_rol(empresa, 'caja')
+    empresa.cuenta_ingreso_default = obtener_cuenta_por_rol(empresa, 'ventas')
+    empresa.cuenta_iva_default = obtener_cuenta_por_rol(empresa, 'iva_por_pagar')
+    empresa.save(update_fields=['cuenta_cobro_default', 'cuenta_ingreso_default', 'cuenta_iva_default'])
+    return empresa
 
 
 class AsientoContableError(Exception):
@@ -618,20 +659,42 @@ def obtener_metricas_dashboard_contador() -> dict:
     }
 
 
+def _calcular_costo_venta_factura(factura) -> Decimal:
+    """
+    Suma `cantidad_en_unidades_base × costo_promedio` de cada línea de la
+    factura -- líneas de un producto/variante sin `costo_promedio` registrado
+    (nunca entró con un costo conocido) simplemente no aportan nada: no hay
+    forma de valorizarlas, así que se excluyen en vez de inventar un costo.
+    """
+    total = Decimal('0.00')
+    for detalle in factura.detalles.select_related('producto', 'variante', 'presentacion').all():
+        item = detalle.variante or detalle.producto
+        costo = getattr(item, 'costo_promedio', None) if item else None
+        if not costo:
+            continue
+        factor = detalle.presentacion.factor_conversion if detalle.presentacion_id else 1
+        cantidad_base = Decimal(detalle.cantidad) * Decimal(factor)
+        total += cantidad_base * Decimal(costo)
+    return _round(total)
+
+
 def generar_asiento_automatico_venta(factura) -> AsientoContable | None:
     """
     Se llama DESPUÉS de que una venta ya se cobró con éxito
     (`procesar_pago_factura_service`) -- nunca debe poder tumbar ni revertir
-    la venta: cualquier problema (no hay empresa propia configurada, faltan
-    cuentas, lo que sea) se traga en silencio y simplemente no genera
-    asiento. El contador siempre puede registrarlo a mano después.
+    la venta: cualquier problema se traga en silencio y simplemente no
+    genera asiento (o genera uno parcial, sin el par de Costo de Venta si
+    ese pedazo falla). El contador siempre puede registrarlo/corregirlo a
+    mano después.
+
+    Auto-provisiona la empresa contable propia del tenant si todavía no
+    existe (ver `obtener_o_crear_empresa_propia`) -- así CUALQUIER tenant
+    (no solo el vertical 'contador') empieza a llevar su contabilidad sola
+    desde su primera venta, sin configurar nada de antemano.
     """
     try:
-        empresa = EmpresaContable.objects.filter(
-            es_negocio_propio=True, activo=True,
-            cuenta_cobro_default__isnull=False, cuenta_ingreso_default__isnull=False,
-        ).select_related('cuenta_cobro_default', 'cuenta_ingreso_default', 'cuenta_iva_default').first()
-        if empresa is None:
+        empresa = obtener_o_crear_empresa_propia()
+        if not (empresa.activo and empresa.cuenta_cobro_default_id and empresa.cuenta_ingreso_default_id):
             return None
 
         total = factura.total or Decimal('0.00')
@@ -644,6 +707,19 @@ def generar_asiento_automatico_venta(factura) -> AsientoContable | None:
             lineas.append({'cuenta_id': empresa.cuenta_iva_default_id, 'debe': 0, 'haber': factura.iva_total})
         else:
             lineas.append({'cuenta_id': empresa.cuenta_ingreso_default_id, 'debe': 0, 'haber': total})
+
+        # Par de Costo de Venta / Inventario -- igual que Odoo al facturar un
+        # producto con costo conocido: se añade AL MISMO asiento (este
+        # sistema no separa "entrega" de "factura" como dos documentos, el
+        # stock ya se descontó de una vez con la venta) en vez de crear un
+        # segundo asiento aparte.
+        cuenta_costo = obtener_cuenta_por_rol(empresa, 'costo_venta')
+        cuenta_inventario = obtener_cuenta_por_rol(empresa, 'inventario')
+        if cuenta_costo and cuenta_inventario:
+            costo_venta = _calcular_costo_venta_factura(factura)
+            if costo_venta > 0:
+                lineas.append({'cuenta_id': cuenta_costo.id, 'debe': costo_venta, 'haber': 0})
+                lineas.append({'cuenta_id': cuenta_inventario.id, 'debe': 0, 'haber': costo_venta})
 
         return crear_asiento_contable(
             empresa=empresa,
@@ -659,4 +735,166 @@ def generar_asiento_automatico_venta(factura) -> AsientoContable | None:
         # pero JAMÁS debe tumbar el flujo de cobro que ya se completó.
         import logging
         logging.getLogger(__name__).warning('No se pudo generar el asiento automático de la venta %s', getattr(factura, 'id', '?'), exc_info=True)
+        return None
+
+
+def generar_asiento_automatico_ajuste_inventario(ajuste) -> AsientoContable | None:
+    """
+    Se llama DESPUÉS de que un `AjusteInventario` ya se aplicó sobre el
+    stock real (ver `stock_service.crear_y_aplicar_ajuste`) -- mismo
+    criterio defensivo que `generar_asiento_automatico_venta`: nunca debe
+    poder tumbar el ajuste ya aplicado, y si no hay forma de valorizar
+    ninguna línea (ningún producto tiene `costo_unitario` en esta línea NI
+    `costo_promedio` registrado), simplemente no genera nada -- un asiento
+    contable sin monto no tiene sentido.
+
+    - SALIDA (merma, conteo físico a la baja, devolución a proveedor...):
+      Debe Costo de Venta, Haber Inventario -- el valor salió de los libros.
+    - ENTRADA con compra (con o sin factura fiscal del proveedor): Debe
+      Inventario, Haber Cuentas por Pagar (si hay proveedor asociado) o Caja
+      (compra de contado, sin proveedor registrado).
+    - ENTRADA por otro motivo (conteo físico al alza, etc.): Debe
+      Inventario, Haber Otros Ingresos -- valor que "apareció" sin un
+      documento de compra que lo respalde.
+    """
+    try:
+        empresa = obtener_o_crear_empresa_propia()
+        if not empresa.activo:
+            return None
+        cuenta_inventario = obtener_cuenta_por_rol(empresa, 'inventario')
+        if cuenta_inventario is None:
+            return None
+
+        total_valor = Decimal('0.00')
+        for detalle in ajuste.detalles.select_related('producto', 'variante').all():
+            costo = detalle.costo_unitario
+            if not costo:
+                item = detalle.variante or detalle.producto
+                costo = getattr(item, 'costo_promedio', None) if item else None
+            if not costo:
+                continue
+            total_valor += Decimal(detalle.cantidad) * Decimal(costo)
+        total_valor = _round(total_valor)
+        if total_valor <= 0:
+            return None
+
+        if ajuste.tipo == 'salida':
+            cuenta_contra = obtener_cuenta_por_rol(empresa, 'costo_venta')
+            if cuenta_contra is None:
+                return None
+            lineas = [
+                {'cuenta_id': cuenta_contra.id, 'debe': total_valor, 'haber': 0},
+                {'cuenta_id': cuenta_inventario.id, 'debe': 0, 'haber': total_valor},
+            ]
+        else:
+            es_compra = ajuste.motivo in ('compra_con_factura', 'compra_sin_factura')
+            if es_compra and ajuste.proveedor_id:
+                cuenta_contra = obtener_cuenta_por_rol(empresa, 'cuentas_por_pagar')
+            elif es_compra:
+                cuenta_contra = obtener_cuenta_por_rol(empresa, 'caja')
+            else:
+                cuenta_contra = obtener_cuenta_por_rol(empresa, 'otros_ingresos')
+            if cuenta_contra is None:
+                return None
+            lineas = [
+                {'cuenta_id': cuenta_inventario.id, 'debe': total_valor, 'haber': 0},
+                {'cuenta_id': cuenta_contra.id, 'debe': 0, 'haber': total_valor},
+            ]
+
+        return crear_asiento_contable(
+            empresa=empresa,
+            fecha=timezone.now().date(),
+            descripcion=f'{ajuste.get_tipo_display()} de inventario ({ajuste.get_motivo_display()}) #{ajuste.id}',
+            lineas=lineas,
+            usuario=ajuste.usuario,
+            origen='ajuste_inventario',
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('No se pudo generar el asiento automático del ajuste de inventario %s', getattr(ajuste, 'id', '?'), exc_info=True)
+        return None
+
+
+def generar_asiento_automatico_pago_proveedor(pago) -> AsientoContable | None:
+    """
+    Se llama DESPUÉS de que un pago a proveedor ya se aplicó sobre la
+    `CuentaPorPagar` real (ver `apps.proveedores.core.proveedores_service.registrar_pago_proveedor`)
+    -- mismo criterio defensivo que el resto de asientos automáticos.
+
+    Simplificación deliberada (igual que `generar_asiento_automatico_venta`
+    con `cuenta_cobro_default`): se asume pago de Caja, sin distinguir por
+    `metodo_pago` -- ese dato igual queda registrado en el `PagoProveedor`
+    para consulta, solo no se usa todavía para elegir entre Caja/Bancos.
+    """
+    try:
+        empresa = obtener_o_crear_empresa_propia()
+        if not empresa.activo:
+            return None
+        cuenta_cxp = obtener_cuenta_por_rol(empresa, 'cuentas_por_pagar')
+        cuenta_caja = obtener_cuenta_por_rol(empresa, 'caja')
+        if not (cuenta_cxp and cuenta_caja):
+            return None
+
+        monto = pago.monto or Decimal('0.00')
+        if monto <= 0:
+            return None
+
+        lineas = [
+            {'cuenta_id': cuenta_cxp.id, 'debe': monto, 'haber': 0},
+            {'cuenta_id': cuenta_caja.id, 'debe': 0, 'haber': monto},
+        ]
+        cuenta = pago.cuenta_por_pagar
+        return crear_asiento_contable(
+            empresa=empresa,
+            fecha=timezone.now().date(),
+            descripcion=f'Pago a {cuenta.proveedor.nombre} ({cuenta.numero_documento or "s/n"})',
+            lineas=lineas,
+            usuario=pago.usuario,
+            origen='pago_proveedor',
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('No se pudo generar el asiento automático del pago a proveedor %s', getattr(pago, 'id', '?'), exc_info=True)
+        return None
+
+
+def generar_asiento_automatico_nomina(periodo) -> AsientoContable | None:
+    """
+    Se llama DESPUÉS de que un `PeriodoNomina` ya se marcó como pagado (ver
+    `apps.rrhh.services.pagar_periodo_nomina`) -- registra el gasto total de
+    sueldos del período de una sola vez (Debe Gasto de Sueldos, Haber Caja).
+
+    Simplificación deliberada: se asume que la nómina se paga de contado
+    (no queda como pasivo "Sueldos por Pagar" pendiente) -- razonable para
+    la mayoría de negocios pequeños de este sistema, que pagan al personal
+    el mismo día que corren la nómina.
+    """
+    try:
+        empresa = obtener_o_crear_empresa_propia()
+        if not empresa.activo:
+            return None
+        cuenta_gasto = obtener_cuenta_por_rol(empresa, 'gasto_sueldos')
+        cuenta_caja = obtener_cuenta_por_rol(empresa, 'caja')
+        if not (cuenta_gasto and cuenta_caja):
+            return None
+
+        total = sum((e.total_pagar for e in periodo.empleados.all()), Decimal('0.00'))
+        if total <= 0:
+            return None
+
+        lineas = [
+            {'cuenta_id': cuenta_gasto.id, 'debe': total, 'haber': 0},
+            {'cuenta_id': cuenta_caja.id, 'debe': 0, 'haber': total},
+        ]
+        return crear_asiento_contable(
+            empresa=empresa,
+            fecha=timezone.now().date(),
+            descripcion=f'Nómina {periodo.fecha_desde} a {periodo.fecha_hasta}',
+            lineas=lineas,
+            usuario=periodo.usuario,
+            origen='nomina',
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('No se pudo generar el asiento automático de la nómina %s', getattr(periodo, 'id', '?'), exc_info=True)
         return None

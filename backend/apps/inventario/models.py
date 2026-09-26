@@ -105,7 +105,25 @@ class Producto(models.Model): #Listo
     descripcion = models.TextField(blank=True, null=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2, blank=True, null=True)
     cantidad = models.IntegerField(blank=True, null=True)
+    # Costo promedio ponderado por unidad -- se recalcula solo en cada
+    # ENTRADA con `costo_unitario` informado (ver
+    # `stock_service.crear_y_aplicar_ajuste`); una salida NUNCA lo toca,
+    # solo lo consume. Es lo único que permite valorizar el inventario y
+    # calcular el Costo de Venta al generar el asiento automático de una
+    # venta (ver `apps.contabilidad.services.generar_asiento_automatico_venta`)
+    # -- sin esto, el sistema no tenía forma de saber cuánto vale lo vendido,
+    # solo su precio de venta.
+    costo_promedio = models.DecimalField(max_digits=14, decimal_places=6, default=0)
     almacen = models.ForeignKey(Almacen, on_delete=models.SET_NULL, blank=True, null=True)
+    # Qué equipo de trabajo prepara/despacha este producto (ej. "Cocina" para
+    # un plato, "Barra" para un trago, "Almacén" para un artículo de
+    # depósito) -- ver `apps.rrhh.models.Departamento`. Al agregarse a un
+    # `PedidoMesaItem` este valor se copia como snapshot (ver
+    # `apps.restaurantes.api.views.PedidoMesaViewSet.agregar_item`), así que
+    # cambiarlo después no reescribe pedidos ya en curso.
+    departamento = models.ForeignKey(
+        'rrhh.Departamento', on_delete=models.SET_NULL, blank=True, null=True, related_name='+',
+    )
     codigo_barras = models.CharField(unique=True, max_length=50, blank=True, null=True)
     disponible_online = models.BooleanField(blank=True, null=True)
     # Insumo/materia prima de uso interno (ej. papas, zanahoria en un
@@ -157,6 +175,14 @@ class Producto(models.Model): #Listo
     stock_minimo = models.PositiveIntegerField(
         blank=True, null=True,
         help_text='Umbral de "bajo stock" para este producto. Vacío = usa el umbral general del sistema.',
+    )
+    # Vacío = este producto no lleva garantía rastreada -- no se genera
+    # ninguna `Garantia` al venderlo (ver `apps.postventa.services`). Puesto
+    # aquí (no en `apps.postventa`) porque es un atributo propio del
+    # producto, igual que `stock_minimo`.
+    meses_garantia = models.PositiveIntegerField(
+        blank=True, null=True, verbose_name="Meses de Garantía",
+        help_text='Cuántos meses de garantía tiene este producto al venderse. Vacío = sin garantía rastreada.',
     )
 
     # Campo de eliminacion logica
@@ -251,6 +277,7 @@ class Variacionproducto(models.Model):
     sku = models.CharField(unique=True, max_length=50, blank=True, null=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2, null=True)
     cantidad = models.IntegerField(blank=True, null=True)
+    costo_promedio = models.DecimalField(max_digits=14, decimal_places=6, default=0)
     # `blank=True` (antes faltaba): igual que en Producto, muchos rubros no
     # asignan código de barras a cada variante -- sin esto, DRF lo trataba
     # como obligatorio aunque el modelo ya lo permitía nulo.
@@ -352,6 +379,17 @@ class AjusteInventario(models.Model):
     observaciones = models.TextField(blank=True, default='')
     usuario = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='ajustes_inventario')
     fecha_creacion = models.DateTimeField(auto_now_add=True)
+    # Fecha del documento FÍSICO del proveedor (la nota de entrega o
+    # factura), independiente de `fecha_creacion` (cuándo se cargó al
+    # sistema) -- antes no existía, así que si alguien registraba HOY una
+    # compra de hace dos semanas, Cuentas por Pagar la envejecía mal (la
+    # trataba como "recién emitida", ver `crear_cuenta_por_pagar_desde_ajuste`).
+    # Editable después de creado (ver `AjusteInventarioViewSet.partial_update`)
+    # para poder corregirla sin tener que anular y rehacer el ajuste completo.
+    fecha_documento = models.DateField(
+        null=True, blank=True,
+        help_text="Fecha del documento del proveedor (nota de entrega/factura). Vacío = se usa la fecha en que se cargó el ajuste.",
+    )
     activo = models.BooleanField(default=True)
 
     class Meta:
@@ -360,6 +398,11 @@ class AjusteInventario(models.Model):
 
     def __str__(self) -> str:
         return f"Ajuste {self.get_tipo_display()} #{self.pk}"
+
+    @property
+    def fecha_efectiva(self):
+        """`fecha_documento` si se cargó; si no, la fecha en que se registró el ajuste."""
+        return self.fecha_documento or self.fecha_creacion.date()
 
 
 class AjusteInventarioDetalle(models.Model):
@@ -382,6 +425,45 @@ class AjusteInventarioDetalle(models.Model):
 
     class Meta:
         db_table = 'AjusteInventarioDetalle'
+
+
+class TrasladoInventario(models.Model):
+    """
+    Traslado de stock entre dos almacenes del mismo tenant -- a propósito
+    NO tiene un estado "en tránsito" ni una confirmación de recepción: se
+    descuenta del origen y se suma al destino en la misma operación (ver
+    `apps.inventario.services.stock_service.crear_y_aplicar_traslado`), así
+    que al guardarse el traslado ya está hecho, no pendiente. `PROTECT` en
+    los almacenes: borrar uno con traslados históricos rompería la
+    trazabilidad de a dónde fue o de dónde vino ese stock.
+    """
+    almacen_origen = models.ForeignKey(Almacen, on_delete=models.PROTECT, related_name='traslados_salida')
+    almacen_destino = models.ForeignKey(Almacen, on_delete=models.PROTECT, related_name='traslados_entrada')
+    observaciones = models.TextField(blank=True, default='')
+    usuario = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='traslados_inventario')
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'TrasladoInventario'
+        ordering = ['-fecha_creacion']
+
+    def __str__(self) -> str:
+        return f"Traslado {self.almacen_origen_id} → {self.almacen_destino_id} ({self.fecha_creacion:%d/%m/%Y})"
+
+
+class TrasladoInventarioDetalle(models.Model):
+    """Línea de un `TrasladoInventario`: el producto y la cantidad movida entre los dos almacenes."""
+    traslado = models.ForeignKey(TrasladoInventario, on_delete=models.CASCADE, related_name='detalles')
+    producto = models.ForeignKey(Producto, on_delete=models.PROTECT)
+    cantidad = models.PositiveIntegerField()
+    # Snapshots del stock de CADA almacén justo después de aplicar esta
+    # línea -- igual que `AjusteInventarioDetalle.stock_resultante`, queda
+    # fijo como registro histórico aunque el stock se siga moviendo después.
+    stock_resultante_origen = models.IntegerField(blank=True, null=True)
+    stock_resultante_destino = models.IntegerField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'TrasladoInventarioDetalle'
 
 
 class Transportista(models.Model):

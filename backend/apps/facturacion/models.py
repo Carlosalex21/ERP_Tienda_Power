@@ -110,6 +110,40 @@ class Factura(models.Model):
         verbose_name="Pendiente de aprobación",
         help_text="True si es un pedido (catálogo/B2B) que todavía no ha sido confirmado por el admin: no debe recibir correlativo ni número de control hasta que se apruebe.",
     )
+    # Marca si YA se descontó el stock de los `detalles` de este documento --
+    # necesario porque ahora hay DOS caminos que pueden descontarlo: el pago
+    # normal (`afectar_inventario_por_venta`, llamado al cobrar) y una nota
+    # de entrega (`estado='nota_entrega'`, que descuenta al crearse, antes de
+    # cualquier pago -- ver `NotaEntregaService`). Sin esta bandera, convertir
+    # una nota de entrega en factura y luego cobrarla habría descontado el
+    # mismo stock dos veces; y anular un documento que nunca llegó a
+    # descontar stock (ej. un borrador) habría restaurado stock que nunca
+    # salió.
+    inventario_afectado = models.BooleanField(
+        default=False,
+        verbose_name="Inventario afectado",
+        help_text="True si ya se descontó el stock de esta factura/nota de entrega -- evita descontarlo dos veces o restaurarlo sin haberlo descontado.",
+    )
+    # Seguimiento de PREPARACIÓN/despacho -- generaliza "el almacenista marca
+    # que ya lo preparó" a cualquier vertical con pedidos físicos que armar
+    # (retail, farmacia, B2B), separado a propósito de `estado` (que es el
+    # ciclo de vida FISCAL/de cobro: pendiente/pagado/anulada...): un pedido
+    # puede estar pagado y sin preparar, o preparado y aún sin cobrar.
+    ESTADO_PREPARACION_CHOICES = (
+        ('pendiente', 'Pendiente de preparar'),
+        ('listo', 'Listo para despacho/entrega'),
+    )
+    estado_preparacion = models.CharField(
+        max_length=10, choices=ESTADO_PREPARACION_CHOICES, default='pendiente',
+    )
+    departamento_preparacion = models.ForeignKey(
+        'rrhh.Departamento', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+        help_text='Qué equipo (Almacén, Cocina...) debe preparar este pedido -- opcional, para filtrar la cola de trabajo por estación.',
+    )
+    preparado_por = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    fecha_preparado = models.DateTimeField(null=True, blank=True)
 
     class Meta:
         db_table = 'Factura'
@@ -154,6 +188,22 @@ class Factura(models.Model):
                     "No se pudo generar el número de control de la factura: %s", e
                 )
 
+        # Correlativo de Nota de Entrega: propio y NO fiscal (nunca lleva
+        # número de control SENIAT ni entra al Libro de Ventas, ver el
+        # `if self.correlativo and registrar_libro` más abajo, que por eso
+        # exige además `self.estado != 'nota_entrega'`) -- solo sirve para
+        # poder referenciarla al imprimirla o en el listado mientras espera
+        # a convertirse en una factura real (`convertir_nota_entrega_a_factura`).
+        if not self.correlativo and self.estado == 'nota_entrega':
+            try:
+                from apps.configuracion.core.config_service import obtener_y_actualizar_correlativo_nota_entrega
+                self.correlativo = obtener_y_actualizar_correlativo_nota_entrega()
+            except Exception as e:
+                import logging
+                logging.getLogger(__name__).error(
+                    "No se pudo generar el correlativo de la nota de entrega: %s", e
+                )
+
         super().save(*args, **kwargs)
 
         # Registro en el Libro de Ventas (SENIAT) -- se hace AQUÍ, no en el
@@ -167,8 +217,11 @@ class Factura(models.Model):
         # quedaban registradas en absoluto. `registrar_factura_en_libro` no
         # hace nada si todavía no hay correlativo, y actualiza (no duplica)
         # la línea existente si ya la había -- es seguro llamarla en cada
-        # guardado.
-        if self.correlativo and registrar_libro:
+        # guardado. `estado != 'nota_entrega'`: una nota de entrega ya tiene
+        # `correlativo` propio (ver arriba) pero NO es un comprobante fiscal
+        # todavía -- no debe entrar al Libro de Ventas hasta convertirse en
+        # factura real.
+        if self.correlativo and registrar_libro and self.estado != 'nota_entrega':
             try:
                 from .services.libros_service import registrar_factura_en_libro
                 registrar_factura_en_libro(self)
@@ -245,6 +298,12 @@ class Detallefactura(models.Model):
     # justo lo que una auditoría fiscal no puede permitir. Con PROTECT, ese
     # borrado se rechaza mientras exista al menos una factura que la use.
     variante = models.ForeignKey('inventario.Variacionproducto', on_delete=models.PROTECT, null=True, blank=True)
+    # PROTECT por la misma razón que `variante` -- una factura ya emitida no
+    # puede perder en silencio de qué presentación (unidad/bulto/docena) se
+    # vendió solo porque alguien borró esa presentación después.
+    presentacion = models.ForeignKey(
+        'inventario.PresentacionProducto', on_delete=models.PROTECT, null=True, blank=True,
+    )
     cantidad = models.IntegerField()
     precio_unitario = models.DecimalField(max_digits=10, decimal_places=2)
     descuento = models.DecimalField(max_digits=5, decimal_places=2, blank=True, null=True)
@@ -374,6 +433,44 @@ class CajaSesionMonto(models.Model):
         if self.monto_cierre_esperado is None or self.monto_cierre_declarado is None:
             return None
         return self.monto_cierre_declarado - self.monto_cierre_esperado
+
+
+class MovimientoCaja(models.Model):
+    """
+    Movimiento manual de caja que NO corresponde al cobro de una factura --
+    ej. retirar el efectivo contado al cerrar turno para depositarlo en el
+    banco (`egreso`), o una inyección de efectivo para dar vuelto
+    (`ingreso`). Junto con `Transaccionpago` (los cobros), es lo que
+    justifica el saldo de un día completo: sin este modelo, un egreso así
+    solo podía anotarse en `CajaSesion.observaciones_cierre` como texto
+    libre, sin quedar como un movimiento real que sumar/restar en un reporte.
+    """
+    TIPO_CHOICES = (
+        ('ingreso', 'Ingreso'),
+        ('egreso', 'Egreso'),
+    )
+    tipo = models.CharField(max_length=10, choices=TIPO_CHOICES)
+    # Turno durante el cual se hizo el movimiento -- nulo si se registra
+    # fuera de un turno abierto (ej. un ajuste que un admin hace después).
+    caja_sesion = models.ForeignKey(
+        CajaSesion, on_delete=models.SET_NULL, blank=True, null=True, related_name='movimientos',
+    )
+    # A qué banco fue/vino el efectivo -- ej. "depósito del cierre de hoy al
+    # Banco X". Nulo si el movimiento no involucra un banco (ej. un ingreso
+    # de caja chica desde la gaveta de otro negocio del mismo dueño).
+    banco = models.ForeignKey('pagos.Banco', on_delete=models.SET_NULL, blank=True, null=True)
+    moneda = models.ForeignKey('configuracion.Moneda', on_delete=models.PROTECT)
+    monto = models.DecimalField(max_digits=14, decimal_places=2)
+    concepto = models.CharField(max_length=255, help_text='Ej: "Depósito del cierre del 24/09 al Banco Mercantil".')
+    usuario = models.ForeignKey(User, on_delete=models.PROTECT, related_name='movimientos_caja')
+    fecha = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'MovimientoCaja'
+        ordering = ['-fecha']
+
+    def __str__(self) -> str:
+        return f"{self.get_tipo_display()} {self.monto} ({self.concepto})"
 
 
 class Transaccionpago(models.Model):

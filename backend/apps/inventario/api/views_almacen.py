@@ -27,9 +27,17 @@ class AlmacenViewSet(viewsets.ModelViewSet):
         instance.save()
 
 class InventarioViewSet(viewsets.ModelViewSet):
-    queryset = Inventario.objects.filter(activo=True).order_by("id")
+    """
+    Desglose de stock por almacén. `filterset_fields`: sin esto,
+    `?almacen=<id>` no filtraba nada (el backend de filtros por defecto
+    exige que cada ViewSet declare explícitamente qué campos admite) -- el
+    selector de traslados necesita justo esto para mostrar "qué hay
+    disponible en el almacén de origen elegido".
+    """
+    queryset = Inventario.objects.select_related('producto', 'almacen').filter(activo=True).order_by("id")
     serializer_class = InventarioSerializer
     permission_classes = [permissions.IsAuthenticated]
+    filterset_fields = ['almacen', 'producto']
 
     def perform_destroy(self, instance):
         instance.activo = False

@@ -57,6 +57,29 @@ class SubscriptionService:
         return sub
 
     @staticmethod
+    def otorgar_meses_bonus(client_id, meses: int) -> Subscription | None:
+        """
+        Extiende `fecha_fin` de la suscripción de `client_id` en `meses * 30`
+        días SIN cambiar de plan -- usado por el programa de referidos (ver
+        `apps.tenants.services.subscription_payment_service.confirmar_pago`)
+        para regalar meses gratis a quien invitó y a quien fue invitado.
+
+        Si el cliente no tiene ninguna suscripción todavía (no debería pasar
+        -- todo tenant arranca con una de prueba -- pero por si acaso), no
+        hace nada: regalar meses de un plan que no existe no tiene sentido.
+        """
+        sub = Subscription.objects.filter(client_id=client_id).first()
+        if not sub:
+            return None
+        hoy = date.today()
+        base = sub.fecha_fin if (sub.fecha_fin and sub.fecha_fin >= hoy) else hoy
+        sub.fecha_fin = base + timedelta(days=meses * 30)
+        if sub.estado != 'activa':
+            sub.estado = 'activa'
+        sub.save(update_fields=['fecha_fin', 'estado'])
+        return sub
+
+    @staticmethod
     def handle_payment_failure(client_id):
         """
         Lógica a ejecutar si un pago recurrente falla.

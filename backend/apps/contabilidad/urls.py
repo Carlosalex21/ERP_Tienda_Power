@@ -5,6 +5,7 @@ from .api.views import (
     EmpresaContableViewSet, CuentaContableViewSet, AsientoContableViewSet, AsientoPlantillaViewSet,
     LibroMayorView, BalanceComprobacionView, EstadosFinancierosView, ConciliacionBancariaView,
     BalanceComprobacionExportView, EstadosFinancierosExportView, LibroMayorExportView,
+    MiEmpresaContableView,
 )
 
 router = DefaultRouter()
@@ -14,6 +15,7 @@ router.register(r'asientos', AsientoContableViewSet, basename='asiento-contable'
 router.register(r'plantillas', AsientoPlantillaViewSet, basename='asiento-plantilla')
 
 urlpatterns = [
+    path('mi-empresa/', MiEmpresaContableView.as_view(), name='mi-empresa-contable'),
     path('', include(router.urls)),
     path('reportes/libro-mayor/', LibroMayorView.as_view(), name='libro-mayor'),
     path('reportes/balance-comprobacion/', BalanceComprobacionView.as_view(), name='balance-comprobacion'),

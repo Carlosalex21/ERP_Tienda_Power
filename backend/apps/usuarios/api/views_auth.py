@@ -178,3 +178,31 @@ class UserMeView(APIView):
     def get(self, request):
         serializer = self.serializer_class(request.user.metadata)
         return standard_response(data=serializer.data)
+
+
+class CambiarPasswordView(APIView):
+    """
+    Autoservicio: el usuario autenticado cambia SU PROPIA contraseña.
+    Distinto del reseteo de otro usuario por un admin (`UserManagementViewSet`)
+    y del flujo de "olvidé mi contraseña" (`PasswordResetConfirmView`, sin
+    sesión) -- este exige la contraseña actual porque quien lo llama ya
+    tiene una sesión válida y solo se está protegiendo de que alguien con
+    el dispositivo desbloqueado se la cambie sin saberla.
+    """
+
+    permission_classes = [IsAuthenticated]
+
+    def post(self, request):
+        actual = request.data.get("password_actual")
+        nueva = request.data.get("password_nueva")
+
+        if not actual or not nueva:
+            return error_response([{"code": "required", "detail": "Faltan datos requeridos.", "field": None}])
+        if len(nueva) < 8:
+            return error_response([{"code": "invalid", "detail": "La nueva contraseña debe tener al menos 8 caracteres.", "field": "password_nueva"}])
+        if not request.user.check_password(actual):
+            return error_response([{"code": "invalid", "detail": "La contraseña actual no es correcta.", "field": "password_actual"}])
+
+        request.user.set_password(nueva)
+        request.user.save(update_fields=["password"])
+        return standard_response(data={"message": "Contraseña actualizada."})

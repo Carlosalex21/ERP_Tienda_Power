@@ -17,7 +17,7 @@ from django.contrib.auth.models import User as PublicUser
 from django.db import transaction
 from django_tenants.utils import tenant_context
 
-from apps.tenants.models import Client, Domain, Plan
+from apps.tenants.models import Client, Domain, Plan, Referido
 from apps.tenants.services.subscription_service import SubscriptionService
 
 logger = logging.getLogger(__name__)
@@ -178,6 +178,7 @@ class TenantService:
         plan_id: int | None = None,
         trial_days: int = 14,
         cantidad_mesas: int = 6,
+        codigo_referido: str | None = None,
     ) -> Client:
         """
         Registra un nuevo inquilino completo.
@@ -238,6 +239,15 @@ class TenantService:
 
         # Dominio primario.
         Domain.objects.create(domain=full_domain, tenant=tenant, is_primary=True)
+
+        # Programa de referidos -- el código ES el `schema_name` de quien
+        # invitó (ver `apps.tenants.models.Referido`). Fail-open a propósito
+        # (código inválido/propio subdominio/typo): un dato mal ingresado en
+        # este campo opcional nunca debe poder tumbar un registro real.
+        if codigo_referido and codigo_referido.strip().lower() != subdomain.lower():
+            referente = Client.objects.filter(schema_name=codigo_referido.strip().lower()).exclude(schema_name='public').first()
+            if referente:
+                Referido.objects.create(referente=referente, referido=tenant)
 
         # Toda alta nueva arranca SIEMPRE con el plan de prueba, sin importar
         # qué plan de pago haya elegido el usuario en el registro. Activar un

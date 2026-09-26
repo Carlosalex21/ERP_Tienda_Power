@@ -1,4 +1,5 @@
 from rest_framework import generics, permissions, status, viewsets
+from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
@@ -7,11 +8,13 @@ from datetime import date, datetime, timedelta
 from drf_spectacular.utils import extend_schema
 from apps.core.permissions import IsTenantAdmin
 
-from apps.rrhh.models import Horario, DiaFestivo, Asistencia, Descanso, Sucursal
+from apps.rrhh.models import Horario, DiaFestivo, Asistencia, Descanso, Sucursal, Departamento, PeriodoNomina, ConceptoNomina
 from apps.rrhh.api.serializers import (
     HorarioSerializer, DiaFestivoSerializer, AsistenciaSerializer, SucursalSerializer,
-    AttendanceSummaryResponseSerializer,
+    AttendanceSummaryResponseSerializer, DepartamentoSerializer,
+    PeriodoNominaSerializer, GenerarPeriodoNominaSerializer, ConceptoNominaSerializer,
 )
+from apps.rrhh.services import generar_periodo_nomina, pagar_periodo_nomina, NominaError
 
 def get_working_days(year, month):
     """Calcula los días laborables (L-V) de un mes."""
@@ -28,6 +31,71 @@ class SucursalViewSet(viewsets.ModelViewSet):
     queryset = Sucursal.objects.all()
     serializer_class = SucursalSerializer
     permission_classes = [IsTenantAdmin]
+
+
+class DepartamentoViewSet(viewsets.ModelViewSet):
+    """Administra los departamentos/equipos de trabajo del tenant (Cocina, Almacén, Taller...)."""
+    queryset = Departamento.objects.filter(activo=True)
+    serializer_class = DepartamentoSerializer
+    permission_classes = [IsTenantAdmin]
+
+    def perform_destroy(self, instance):
+        instance.activo = False
+        instance.save(update_fields=['activo'])
+
+
+class ConceptoNominaViewSet(viewsets.ModelViewSet):
+    """
+    Bonos/deducciones configurables por el tenant (ver `ConceptoNomina`) --
+    los `recurrente=True` y `activo=True` se aplican solos en cada nómina
+    nueva. No se borran físicamente (ya podrían estar snapshoteados en
+    nóminas pasadas vía `NominaEmpleadoConcepto`, protegido con `PROTECT`),
+    solo se desactivan.
+    """
+    queryset = ConceptoNomina.objects.all()
+    serializer_class = ConceptoNominaSerializer
+    permission_classes = [IsTenantAdmin]
+
+    def perform_destroy(self, instance):
+        instance.activo = False
+        instance.save(update_fields=['activo'])
+
+
+class PeriodoNominaViewSet(viewsets.ModelViewSet):
+    """
+    Períodos de nómina -- solo lectura + creación (que en realidad ejecuta
+    `generar_periodo_nomina`, no un `.create()` genérico) y la acción
+    `pagar`. No se edita un período ya generado línea por línea: si algo
+    está mal, se puede volver a generar con otro rango o pagar y corregir
+    a mano en Contabilidad.
+    """
+    queryset = PeriodoNomina.objects.prefetch_related('empleados__usuario', 'empleados__conceptos')
+    serializer_class = PeriodoNominaSerializer
+    permission_classes = [IsTenantAdmin]
+    http_method_names = ['get', 'post', 'head', 'options']
+
+    def create(self, request, *args, **kwargs):
+        serializer = GenerarPeriodoNominaSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            periodo = generar_periodo_nomina(
+                fecha_desde=serializer.validated_data['fecha_desde'],
+                fecha_hasta=serializer.validated_data['fecha_hasta'],
+                usuario=request.user,
+            )
+        except NominaError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(periodo).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def pagar(self, request, pk=None):
+        periodo = self.get_object()
+        try:
+            pagar_periodo_nomina(periodo, request.user)
+        except NominaError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(self.get_serializer(periodo).data)
+
 
 class HorarioDetailView(APIView):
     permission_classes = [IsTenantAdmin]

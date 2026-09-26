@@ -13,7 +13,7 @@ from .serializers import OrdenServicioSerializer, CerrarOrdenServicioSerializer,
 
 
 class OrdenServicioViewSet(viewsets.ModelViewSet):
-    queryset = OrdenServicio.objects.select_related('cliente', 'tecnico').filter(activo=True)
+    queryset = OrdenServicio.objects.select_related('cliente', 'tecnico', 'departamento').filter(activo=True)
     serializer_class = OrdenServicioSerializer
     permission_classes = [IsAdminOrVendedor]
 
@@ -22,6 +22,9 @@ class OrdenServicioViewSet(viewsets.ModelViewSet):
         estado = self.request.query_params.get('estado')
         if estado:
             qs = qs.filter(estado=estado)
+        departamento = self.request.query_params.get('departamento')
+        if departamento:
+            qs = qs.filter(departamento_id=departamento)
         return qs
 
     def perform_destroy(self, instance):

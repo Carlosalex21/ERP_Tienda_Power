@@ -17,7 +17,7 @@ from django.db.models import Sum
 
 from apps.configuracion.models import Moneda
 
-from ..models import CajaSesion, CajaSesionMonto, Transaccionpago
+from ..models import CajaSesion, CajaSesionMonto, MovimientoCaja, Transaccionpago
 
 CENT = Decimal("0.01")
 
@@ -43,6 +43,97 @@ def _es_efectivo(metodo) -> bool:
 def obtener_caja_activa(usuario):
     """Devuelve el turno abierto de este usuario, o None si no tiene uno."""
     return CajaSesion.objects.filter(usuario=usuario, activo=True).prefetch_related('montos__moneda').first()
+
+
+def _calcular_efectivo_por_moneda(sesion, moneda):
+    """Total y lista (orden cronológico) de ventas en EFECTIVO de `moneda` durante `sesion`."""
+    ventas = Transaccionpago.objects.filter(
+        caja_sesion=sesion, activo=True, estado="exitoso", factura__moneda=moneda,
+    ).select_related('metodo_pago', 'factura').order_by('fecha')
+    transacciones_efectivo = [t for t in ventas if _es_efectivo(t.metodo_pago)]
+    total = sum((t.monto for t in transacciones_efectivo), Decimal("0.00"))
+    return total, transacciones_efectivo
+
+
+def previsualizar_cierre_caja(usuario) -> dict:
+    """
+    Calcula lo mismo que `cerrar_caja_service` (esperado por moneda) SIN
+    cerrar el turno -- para que el cajero vea el detalle (qué ventas en
+    efectivo componen ese total) ANTES de confirmar el cierre. Esto es lo
+    que "justifica" la cifra final: no es un número que hay que creerle al
+    sistema, se puede revisar renglón por renglón de dónde sale.
+    """
+    sesion = CajaSesion.objects.filter(usuario=usuario, activo=True).prefetch_related('montos__moneda').first()
+    if sesion is None:
+        raise CajaServiceError("No tienes un turno de caja abierto.")
+
+    monedas = []
+    for cs_monto in sesion.montos.select_related('moneda').all():
+        total_efectivo, transacciones = _calcular_efectivo_por_moneda(sesion, cs_monto.moneda)
+        monedas.append({
+            "moneda_id": cs_monto.moneda_id,
+            "moneda_codigo": cs_monto.moneda.codigo,
+            "moneda_simbolo": cs_monto.moneda.simbolo,
+            "monto_apertura": cs_monto.monto_apertura,
+            "total_ventas_efectivo": total_efectivo,
+            "monto_cierre_esperado": _round(cs_monto.monto_apertura + total_efectivo),
+            "movimientos": [
+                {
+                    "id": t.id,
+                    "fecha": t.fecha,
+                    "monto": t.monto,
+                    "referencia": t.referencia,
+                    "factura_correlativo": t.factura.correlativo if t.factura else None,
+                }
+                for t in transacciones
+            ],
+        })
+    return {"sesion_id": sesion.id, "fecha_apertura": sesion.fecha_apertura, "monedas": monedas}
+
+
+def registrar_movimiento_caja(
+    *, usuario, tipo: str, moneda_id, monto, concepto: str, banco_id=None, caja_sesion_id=None,
+) -> MovimientoCaja:
+    """
+    Registra un movimiento manual de caja (ingreso/egreso) que no viene de
+    cobrar una factura -- ej. "retiré el efectivo contado y lo llevé al
+    banco". `caja_sesion_id` es opcional: normalmente es el turno recién
+    cerrado del cajero, pero un admin puede registrar un movimiento suelto
+    (ej. un ajuste) sin un turno de por medio.
+    """
+    if tipo not in ("ingreso", "egreso"):
+        raise CajaServiceError("El tipo de movimiento debe ser 'ingreso' o 'egreso'.")
+    if not moneda_id:
+        raise CajaServiceError("Debes indicar la moneda del movimiento.")
+    try:
+        moneda = Moneda.objects.get(id=moneda_id)
+    except Moneda.DoesNotExist as exc:
+        raise CajaServiceError(f"Moneda con ID {moneda_id} no existe.") from exc
+
+    banco = None
+    if banco_id:
+        from apps.pagos.models import Banco
+        banco = Banco.objects.filter(id=banco_id).first()
+        if banco is None:
+            raise CajaServiceError(f"Banco con ID {banco_id} no existe.")
+
+    caja_sesion = None
+    if caja_sesion_id:
+        caja_sesion = CajaSesion.objects.filter(id=caja_sesion_id).first()
+        if caja_sesion is None:
+            raise CajaServiceError(f"Turno de caja con ID {caja_sesion_id} no existe.")
+
+    try:
+        monto_redondeado = _round(monto)
+    except Exception as exc:
+        raise CajaServiceError("El monto del movimiento no es un número válido.") from exc
+    if monto_redondeado <= 0:
+        raise CajaServiceError("El monto del movimiento debe ser mayor a cero.")
+
+    return MovimientoCaja.objects.create(
+        tipo=tipo, caja_sesion=caja_sesion, banco=banco, moneda=moneda,
+        monto=monto_redondeado, concepto=concepto or "", usuario=usuario,
+    )
 
 
 @transaction.atomic
@@ -98,16 +189,7 @@ def cerrar_caja_service(usuario, montos_declarados: dict, observaciones: str = "
     montos_declarados = montos_declarados or {}
 
     for cs_monto in sesion.montos.select_related('moneda').all():
-        ventas_efectivo = Transaccionpago.objects.filter(
-            caja_sesion=sesion,
-            activo=True,
-            estado="exitoso",
-            factura__moneda=cs_monto.moneda,
-        ).select_related('metodo_pago')
-        total_efectivo = sum(
-            (t.monto for t in ventas_efectivo if _es_efectivo(t.metodo_pago)),
-            Decimal("0.00"),
-        )
+        total_efectivo, _ = _calcular_efectivo_por_moneda(sesion, cs_monto.moneda)
         cs_monto.monto_cierre_esperado = _round(cs_monto.monto_apertura + total_efectivo)
 
         declarado = montos_declarados.get(cs_monto.moneda_id) or montos_declarados.get(str(cs_monto.moneda_id))
@@ -127,10 +209,7 @@ def cerrar_caja_service(usuario, montos_declarados: dict, observaciones: str = "
             moneda = Moneda.objects.get(id=moneda_id_int)
         except Moneda.DoesNotExist:
             continue
-        ventas_efectivo = Transaccionpago.objects.filter(
-            caja_sesion=sesion, activo=True, estado="exitoso", factura__moneda=moneda,
-        ).select_related('metodo_pago')
-        total_efectivo = sum((t.monto for t in ventas_efectivo if _es_efectivo(t.metodo_pago)), Decimal("0.00"))
+        total_efectivo, _ = _calcular_efectivo_por_moneda(sesion, moneda)
         CajaSesionMonto.objects.create(
             caja_sesion=sesion, moneda=moneda, monto_apertura=Decimal("0.00"),
             monto_cierre_esperado=_round(total_efectivo), monto_cierre_declarado=_round(declarado),

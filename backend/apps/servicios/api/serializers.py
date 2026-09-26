@@ -7,12 +7,14 @@ from ..models import OrdenServicio
 class OrdenServicioSerializer(serializers.ModelSerializer):
     cliente_nombre = serializers.CharField(source='cliente.nombre', read_only=True)
     tecnico_nombre = serializers.SerializerMethodField()
+    departamento_nombre = serializers.CharField(source='departamento.nombre', read_only=True, default=None)
 
     class Meta:
         model = OrdenServicio
         fields = (
             'id', 'numero', 'cliente', 'cliente_nombre', 'equipo', 'descripcion_falla', 'diagnostico',
-            'estado', 'tecnico', 'tecnico_nombre', 'costo_estimado', 'factura', 'token_publico',
+            'estado', 'tecnico', 'tecnico_nombre', 'departamento', 'departamento_nombre',
+            'costo_estimado', 'factura', 'token_publico',
             'fecha_recepcion', 'fecha_entrega_estimada', 'fecha_entrega_real',
         )
         read_only_fields = ('numero', 'factura', 'token_publico', 'fecha_recepcion', 'fecha_entrega_real')

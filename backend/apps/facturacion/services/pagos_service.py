@@ -19,8 +19,16 @@ def afectar_inventario_por_venta(factura):
     """
     Recorre los detalles de la factura y delega la reducción de stock
     al servicio especializado del módulo de inventario.
+
+    Idempotente vía `factura.inventario_afectado`: una nota de entrega
+    (`estado='nota_entrega'`) ya descontó su stock al crearse (ver
+    `NotaEntregaService`/`crear_nota_entrega`), así que cuando luego se
+    convierte en factura y se le registra un pago normal, esta función NO
+    debe volver a descontar lo mismo.
     """
-    detalles = Detallefactura.objects.select_related('producto', 'variante').filter(factura=factura)
+    if factura.inventario_afectado:
+        return
+    detalles = Detallefactura.objects.select_related('producto', 'variante', 'presentacion').filter(factura=factura)
     for detalle in detalles:
         # Un producto tipo='servicio' (ej. "Servicio Técnico") no tiene stock
         # que descontar -- venderlo no debe fallar con "stock insuficiente"
@@ -29,7 +37,17 @@ def afectar_inventario_por_venta(factura):
             continue
         # Determinamos si vendimos una variante específica o el producto base
         item_vendido = detalle.variante if detalle.variante else detalle.producto
-        reducir_stock_item(item_vendido, detalle.cantidad)
+        # `detalle.cantidad` está en unidades de la PRESENTACIÓN vendida (ej.
+        # "2" significa 2 bultos, no 2 unidades) -- hay que multiplicar por su
+        # factor de conversión para descontar las unidades base reales.
+        # Las presentaciones solo aplican a productos simples (ver
+        # `PresentacionProducto`), así que nunca coexisten con `variante`.
+        cantidad_base = detalle.cantidad
+        if detalle.presentacion is not None:
+            cantidad_base = detalle.cantidad * detalle.presentacion.factor_conversion
+        reducir_stock_item(item_vendido, cantidad_base)
+    factura.inventario_afectado = True
+    factura.save(update_fields=['inventario_afectado'])
 
 
 def _round(value) -> Decimal:
@@ -209,6 +227,16 @@ def procesar_pago_factura_service(factura_id, pagos, estado_override, datos_adic
         except Exception:
             pass
 
+        # Garantías automáticas -- igual de aislado que el asiento contable
+        # de arriba: solo genera algo si algún producto vendido tiene
+        # `meses_garantia` asignado, y nunca puede tumbar un pago que YA SE
+        # PROCESÓ.
+        try:
+            from apps.postventa.services import generar_garantias_de_factura
+            generar_garantias_de_factura(factura)
+        except Exception:
+            pass
+
     return factura, transacciones
 
 
@@ -218,3 +246,87 @@ def calcular_saldo_pendiente(factura: Factura) -> Decimal:
         factura=factura, activo=True, estado="exitoso",
     ).aggregate(total=Sum("monto"))["total"] or Decimal("0.00")
     return _round((factura.total or Decimal("0.00")) - ya_pagado)
+
+
+def calcular_saldo_pendiente_base(factura: Factura) -> Decimal:
+    """
+    Igual que `calcular_saldo_pendiente`, pero en la MONEDA BASE del tenant
+    (`total_base`) -- necesario para el reporte de Cuentas por Cobrar, que
+    suma facturas de clientes que pueden estar en monedas distintas. Los
+    pagos (`Transaccionpago.monto`) solo se guardan en la moneda de la
+    factura (no tienen su propio `monto_base`), así que se convierten aquí
+    con la MISMA tasa que quedó congelada en la factura al emitirse -- un
+    pago contra una factura siempre está en la moneda de esa factura, así
+    que aplicar su tasa es exacto, no una aproximación.
+    """
+    ya_pagado = Transaccionpago.objects.filter(
+        factura=factura, activo=True, estado="exitoso",
+    ).aggregate(total=Sum("monto"))["total"] or Decimal("0.00")
+    tasa = factura.tasa_cambio or Decimal("1.000000")
+    ya_pagado_base = ya_pagado * tasa
+    return _round((factura.total_base or Decimal("0.00")) - ya_pagado_base)
+
+
+def reporte_cuentas_por_cobrar(fecha_corte=None) -> list[dict]:
+    """
+    Agrupa por cliente las facturas a crédito con saldo pendiente > 0, con
+    antigüedad de saldos (0-30/31-60/61-90/90+ días desde `fecha_operacion`
+    hasta `fecha_corte`) -- el reporte clásico de "quién nos debe y desde
+    hace cuánto". Solo facturas `condicion_pago='credito'` -- una venta de
+    contado no genera cuenta por cobrar (se cobra en el momento).
+    """
+    fecha_corte = fecha_corte or timezone.now().date()
+    facturas = (
+        Factura.objects.filter(condicion_pago="credito", activo=True)
+        .exclude(estado__iexact="anulada")
+        .exclude(estado__iexact="anulado")
+        .exclude(cliente__isnull=True)
+        .select_related("cliente", "moneda")
+    )
+
+    por_cliente: dict[int, dict] = {}
+    for factura in facturas:
+        saldo = calcular_saldo_pendiente_base(factura)
+        if saldo <= 0:
+            continue
+        fecha_op = factura.fecha_operacion.date() if hasattr(factura.fecha_operacion, "date") else factura.fecha_operacion
+        dias = (fecha_corte - fecha_op).days
+        bucket = "0_30" if dias <= 30 else "31_60" if dias <= 60 else "61_90" if dias <= 90 else "mas_90"
+
+        entry = por_cliente.setdefault(factura.cliente_id, {
+            "cliente_id": factura.cliente_id,
+            "cliente_nombre": factura.cliente.nombre,
+            "cliente_telefono": factura.cliente.telefono,
+            "total": Decimal("0.00"),
+            "0_30": Decimal("0.00"),
+            "31_60": Decimal("0.00"),
+            "61_90": Decimal("0.00"),
+            "mas_90": Decimal("0.00"),
+            "facturas": [],
+        })
+        entry["total"] += saldo
+        entry[bucket] += saldo
+        entry["facturas"].append({
+            "id": factura.id,
+            "correlativo": factura.correlativo,
+            "fecha_operacion": fecha_op.isoformat(),
+            "total_base": str(_round(factura.total_base)),
+            "saldo_pendiente_base": str(saldo),
+            "dias": dias,
+            # En la moneda PROPIA de la factura (no la base) -- es lo que
+            # espera `PagoView`/`procesar_pago_factura_service` al registrar
+            # un cobro manual (ver `views_terminal.PagoView`), ya que
+            # `Transaccionpago.monto` siempre está en la moneda de la
+            # factura, nunca en la moneda base del tenant.
+            "moneda_id": factura.moneda_id,
+            "moneda_codigo": factura.moneda.codigo if factura.moneda else None,
+            "moneda_simbolo": (factura.moneda.simbolo or factura.moneda.codigo) if factura.moneda else None,
+            "saldo_pendiente": str(calcular_saldo_pendiente(factura)),
+        })
+
+    filas = list(por_cliente.values())
+    for fila in filas:
+        for campo in ("total", "0_30", "31_60", "61_90", "mas_90"):
+            fila[campo] = str(_round(fila[campo]))
+    filas.sort(key=lambda f: Decimal(f["total"]), reverse=True)
+    return filas

@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .api.views import (
     ClienteListCreateView, ClienteRetrieveUpdateDestroyView,
-    ClienteBulkUploadView, ClienteBulkUploadTemplateView,
+    ClienteBulkUploadView, ClienteBulkUploadTemplateView, TiposDocumentoView,
 )
 from .api.views_b2b import (
     ClienteB2BBulkUploadView,
@@ -22,6 +22,7 @@ router.register(r'b2b/clientes', ClienteB2BAdminViewSet, basename='b2b-cliente-a
 urlpatterns = [
     # --- Endpoints para Clientes Retail ---
     path('', ClienteListCreateView.as_view(), name='cliente-list-create'),
+    path('tipos-documento/', TiposDocumentoView.as_view(), name='cliente-tipos-documento'),
     path('bulk-upload/', ClienteBulkUploadView.as_view(), name='cliente-bulk-upload'),
     path('bulk-upload/plantilla/', ClienteBulkUploadTemplateView.as_view(), name='cliente-bulk-upload-plantilla'),
     path('<int:pk>/', ClienteRetrieveUpdateDestroyView.as_view(), name='cliente-detail'),

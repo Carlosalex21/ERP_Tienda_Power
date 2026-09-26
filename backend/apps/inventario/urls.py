@@ -2,7 +2,7 @@ from django.urls import path, include
 from rest_framework.routers import DefaultRouter
 from .api import (
     views_productos, views_almacen,
-    views_taxonomia, views_operaciones, views_stock, views_ajustes
+    views_taxonomia, views_operaciones, views_stock, views_ajustes, views_traslados
 )
 
 router = DefaultRouter()
@@ -15,6 +15,7 @@ router.register(r'categorias', views_taxonomia.CategoriaViewSet)
 router.register(r'atributos', views_taxonomia.AtributoViewSet)
 router.register(r'movimientos', views_operaciones.MovimientoInventarioViewSet)
 router.register(r'ajustes', views_ajustes.AjusteInventarioViewSet)
+router.register(r'traslados', views_traslados.TrasladoInventarioViewSet)
 
 urlpatterns = [
     # Endpoint especializado para el POS

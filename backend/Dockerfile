@@ -72,6 +72,5 @@ HEALTHCHECK --interval=30s --timeout=5s --start-period=20s --retries=3 \
 # archivo, que Windows/git no preservan de forma confiable en el contexto
 # de build).
 ENTRYPOINT ["sh", "/app/docker-entrypoint.sh"]
-# Número de workers Gunicorn configurable por env var (`GUNICORN_WORKERS`)
-# vía el propio entrypoint -- ver `docker-entrypoint.sh`.
-CMD ["gunicorn"]
+# "web" = Daphne (ASGI: HTTP + WebSockets) -- ver `docker-entrypoint.sh`.
+CMD ["web"]

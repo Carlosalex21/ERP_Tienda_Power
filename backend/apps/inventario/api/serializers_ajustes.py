@@ -60,7 +60,7 @@ class AjusteInventarioSerializer(serializers.ModelSerializer):
         fields = (
             'id', 'tipo', 'tipo_display', 'motivo', 'motivo_display', 'almacen',
             'proveedor', 'numero_documento', 'numero_control', 'observaciones', 'usuario',
-            'usuario_nombre', 'fecha_creacion', 'activo',
+            'usuario_nombre', 'fecha_creacion', 'fecha_documento', 'activo',
             'detalles', 'detalles_para_crear',
         )
         read_only_fields = ('usuario', 'fecha_creacion')
@@ -80,3 +80,17 @@ class AjusteInventarioSerializer(serializers.ModelSerializer):
             )
         except ValueError as exc:
             raise serializers.ValidationError({'detalles': str(exc)})
+
+
+class AjusteInventarioEditSerializer(serializers.ModelSerializer):
+    """
+    Edición de un ajuste YA aplicado -- deliberadamente NO incluye `tipo`,
+    `almacen` ni `detalles`: esos ya movieron stock real, y corregirlos acá
+    (en vez de con un ajuste en sentido contrario) desincronizaría el
+    kardex. Solo se puede corregir metadata del documento -- típicamente
+    la fecha real de la nota/factura del proveedor, cargada después de la
+    fecha en que se registró el ajuste en el sistema.
+    """
+    class Meta:
+        model = AjusteInventario
+        fields = ('motivo', 'proveedor', 'numero_documento', 'numero_control', 'fecha_documento', 'observaciones')

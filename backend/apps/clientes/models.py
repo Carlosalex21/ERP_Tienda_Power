@@ -8,21 +8,55 @@ class Cliente(models.Model):
     Modelo para clientes de tipo Retail (venta al detal).
     Este modelo ya existía y es usado por el flujo de ventas públicas.
     """
+    # Se mantienen aquí solo como choices "superset" de TODOS los países
+    # soportados (para no romper validación de datos ya guardados) -- la
+    # lista que de verdad se le muestra al usuario para elegir depende del
+    # país del tenant y sale de `apps.clientes.tipos_documento`, igual que
+    # `TaxStrategyRegistry` resuelve las tasas de IVA por país (ver
+    # `apps.configuracion.core.tax_strategy`). Antes era un campo de texto
+    # libre en el formulario -- el cajero podía escribir cualquier cosa en
+    # vez de elegir entre las opciones válidas del país.
     TIPO_DOCUMENTO_CHOICES = (
         ('V', 'Cédula Venezolana'),
         ('E', 'Cédula Extranjero'),
         ('J', 'RIF Jurídico'),
         ('G', 'RIF Gubernamental'),
         ('P', 'Pasaporte'),
+        ('CC', 'Cédula de Ciudadanía'),
+        ('CE', 'Cédula de Extranjería'),
+        ('NIT', 'NIT (Persona Jurídica)'),
+        ('DNI', 'DNI'),
+        ('RUC', 'RUC (Persona Jurídica)'),
     )
     nombre = models.CharField(max_length=255)
-    tipo_documento = models.CharField(max_length=1, choices=TIPO_DOCUMENTO_CHOICES, blank=True, null=True, help_text="Tipo de documento de identidad del cliente.")
+    tipo_documento = models.CharField(max_length=5, choices=TIPO_DOCUMENTO_CHOICES, blank=True, null=True, help_text="Tipo de documento de identidad del cliente.")
     documento = models.CharField(max_length=20, blank=True, null=True, help_text="Número de documento de identidad del cliente.")
     telefono = models.CharField(max_length=20, unique=True, blank=True, null=True)
     email = models.EmailField(unique=True, blank=True, null=True)
     direccion = models.TextField(blank=True, default='')
     fecha_registro = models.DateTimeField(auto_now_add=True)
     activo = models.BooleanField(default=True)
+    # Venezuela: un contribuyente especial (calificado por el SENIAT) retiene
+    # el 75%/100% del IVA en vez del porcentaje normal al pagarle a su
+    # proveedor -- un cliente puede EMPEZAR sin esta calificación y
+    # obtenerla después, así que tiene que poder corregirse aquí, no solo
+    # fijarse una vez al registrarlo (antes no existía este campo: no había
+    # forma de reflejar el cambio y las facturas seguían calculando la
+    # retención como si nunca hubiera cambiado).
+    contribuyente_especial = models.BooleanField(
+        default=False,
+        verbose_name="Contribuyente especial",
+        help_text="Venezuela: cliente calificado por el SENIAT como agente de retención de IVA.",
+    )
+    # Plazo de crédito propio del cliente (en días) -- antes solo existía
+    # `Factura.condicion_pago` ('contado'/'credito') sin ningún plazo
+    # asociado, así que Cuentas por Cobrar no podía calcular una fecha de
+    # vencimiento real por cliente, solo una fecha de emisión.
+    dias_credito = models.PositiveIntegerField(
+        blank=True, null=True,
+        verbose_name="Días de crédito",
+        help_text="A cuántos días le das crédito a este cliente (vacío = sin crédito definido).",
+    )
 
     class Meta:
         """
@@ -30,7 +64,7 @@ class Cliente(models.Model):
         - `unique_together`: Asegura que no haya dos clientes con el mismo tipo y número de documento.
         """
         unique_together = ('tipo_documento', 'documento')
-        
+
     def __str__(self):
         return self.nombre
 

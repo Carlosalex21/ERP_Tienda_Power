@@ -23,6 +23,7 @@ from .serializers import (
     MiClienteSerializer, PlatformPaymentInfoSerializer, PlatformPaymentConfigSerializer,
     CrearPagoSuscripcionSerializer, CrearPagoSuscripcionTenantSerializer, SubscriptionPaymentSerializer,
     PlatformSettingsSerializer, RegistrationQuotaSerializer, PeriodoSuscripcionSerializer,
+    ReferidoProgramaSerializer,
 )
 
 class PlanViewSet(viewsets.ModelViewSet):
@@ -114,6 +115,7 @@ class TenantRegistrationView(APIView):
                 pais_codigo=data['pais_codigo'],
                 plan_id=data.get('plan_id'),
                 cantidad_mesas=data.get('cantidad_mesas', 6),
+                codigo_referido=data.get('codigo_referido'),
             )
         except TenantCreationError as e:
             return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
@@ -264,6 +266,45 @@ class TenantProfileView(generics.RetrieveUpdateAPIView):
         if self.request.method in ('PATCH', 'PUT'):
             return TenantOnboardingUpdateSerializer
         return TenantProfileSerializer
+
+
+class ReferidoProgramaView(APIView):
+    """
+    Resumen del programa de referidos para el dueño del tenant actual: su
+    código de invitación (su propio `schema_name`), cuántos negocios ha
+    invitado y en qué estado, y cuántos meses gratis ha ganado en total.
+    Ver `apps.tenants.models.Referido` y
+    `subscription_payment_service._recompensar_referido_si_aplica`.
+    """
+    permission_classes = [IsTenantAdmin]
+
+    @extend_schema(summary="Obtener el resumen del programa de referidos del tenant actual", responses=ReferidoProgramaSerializer)
+    def get(self, request):
+        from apps.tenants.models import Referido
+
+        tenant = request.tenant
+        referidos = Referido.objects.filter(referente=tenant).select_related('referido').order_by('-fecha_registro')
+        recompensados = referidos.filter(estado='recompensado')
+
+        # Mismo patrón que `CrearPagoSuscripcionTenantView` -- el link debe
+        # apuntar al dominio RAÍZ (sin subdominio de tenant), que es donde
+        # vive el formulario de registro público.
+        base_frontend = getattr(settings, 'FRONTEND_BASE_URL', 'http://localhost:3000')
+
+        data = {
+            'codigo_referido': tenant.schema_name,
+            # El formulario de registro público vive en `/login` (ver
+            # `src/app/main/login/page.tsx`, que ya lee `?plan=`) -- no
+            # existe una ruta `/registro` separada.
+            'link_invitacion': f'{base_frontend}/login?ref={tenant.schema_name}',
+            'total_referidos': referidos.count(),
+            'referidos_pendientes': referidos.filter(estado='pendiente').count(),
+            'referidos_recompensados': recompensados.count(),
+            'meses_ganados': sum(r.meses_bonus for r in recompensados),
+            'referidos': list(referidos),
+        }
+        serializer = ReferidoProgramaSerializer(data)
+        return Response(serializer.data)
 
 
 # --- COBRO DE SUSCRIPCIONES SAAS (el tenant le paga a LA PLATAFORMA) ---

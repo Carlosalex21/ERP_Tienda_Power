@@ -15,6 +15,7 @@ from ..services import (
     contabilizar_asiento_borrador, libro_mayor, balance_comprobacion, estados_financieros,
     AsientoContableError, facturar_honorarios_empresa, FacturarHonorariosError,
     cerrar_ejercicio, crear_plantilla_desde_asiento, conciliacion_bancaria, marcar_conciliado,
+    obtener_o_crear_empresa_propia,
 )
 from .serializers import (
     EmpresaContableSerializer, CuentaContableSerializer, AsientoContableSerializer,
@@ -87,6 +88,27 @@ class EmpresaContableViewSet(viewsets.ModelViewSet):
         except AsientoContableError as exc:
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(AsientoContableSerializer(asiento).data, status=status.HTTP_201_CREATED)
+
+
+class MiEmpresaContableView(APIView):
+    """
+    Resuelve (auto-creando si hace falta) la `EmpresaContable` propia del
+    tenant -- para verticales que no son 'contador', esta es la única forma
+    en que el frontend llega a "sus" libros sin tener que pasar antes por
+    una pantalla de "crear empresa contable" que no tiene sentido para un
+    negocio que no lleva contabilidad de terceros.
+    """
+    permission_classes = [IsTenantAdmin]
+
+    def get(self, request):
+        from apps.configuracion.models import ConfiguracionEmpresa
+
+        config = ConfiguracionEmpresa.objects.first()
+        empresa = obtener_o_crear_empresa_propia(
+            nombre=getattr(config, 'nombre_comercial', None),
+            identificacion_fiscal=getattr(config, 'rif', None),
+        )
+        return Response(EmpresaContableSerializer(empresa).data)
 
 
 class CuentaContableViewSet(viewsets.ModelViewSet):

@@ -16,10 +16,12 @@ from drf_spectacular.utils import extend_schema
 
 from apps.core.permissions import IsTenantAdmin
 from apps.core.response import standard_response, error_response, error_response_from_dict
+from apps.core.throttling import ResilientScopedRateThrottle as ScopedRateThrottle
 
 from ..models import ConfiguracionCorrelativo, ConfiguracionEmpresa, Configuracioniva, Moneda, TasaCambio, Tipodocumentofiscal
 from ..services.conversion_service import obtener_tasas_actuales, invalidar_tasas_cambio
 from ..services.bcv_service import asegurar_tasa_bcv_del_dia, BcvApiError
+from ..services.pin_service import verificar_pin
 from ..core.config_service import obtener_tax_strategy_info, obtener_pais_tenant
 from .serializers import (
     ConfiguracionEmpresaSerializer,
@@ -51,6 +53,33 @@ class ConfiguracionEmpresaView(generics.RetrieveUpdateAPIView):
         # get_or_create asegura que la configuración siempre exista.
         obj, _ = ConfiguracionEmpresa.objects.get_or_create(pk=1)
         return obj
+
+
+class RequierePinEliminarView(APIView):
+    """
+    Expone SOLO si el tenant exige PIN para eliminar renglones -- nunca el
+    PIN/hash en sí. Cualquier usuario logueado (un cajero, no solo el admin)
+    necesita saber esto para decidir si pedirle el PIN a un encargado antes
+    de dejarlo eliminar algo (ver `apps.configuracion.services.pin_service`).
+    """
+
+    permission_classes = [permissions.IsAuthenticated]
+
+    def get(self, request):
+        config, _ = ConfiguracionEmpresa.objects.get_or_create(pk=1)
+        return standard_response(data={"requiere_pin_eliminar": config.requiere_pin_eliminar})
+
+
+class VerificarPinView(APIView):
+    """Verifica un PIN ingresado -- nunca revela el PIN real, solo si coincide."""
+
+    permission_classes = [permissions.IsAuthenticated]
+    throttle_classes = [ScopedRateThrottle]
+    throttle_scope = 'pin_autorizacion'
+
+    def post(self, request):
+        pin = str(request.data.get('pin') or '')
+        return standard_response(data={"valido": verificar_pin(pin)})
 
 
 class ConfiguracionCorrelativoView(APIView):

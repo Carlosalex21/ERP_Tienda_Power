@@ -152,6 +152,10 @@ class UserMeSerializer(serializers.ModelSerializer):
     sucursal = serializers.CharField(
         source="sucursal.nombre", read_only=True, allow_null=True
     )
+    departamento = serializers.CharField(
+        source="departamento.nombre", read_only=True, allow_null=True
+    )
+    departamento_id = serializers.IntegerField(read_only=True, allow_null=True)
     # Módulos que el panel debe ocultarle a ESTE usuario según su rol (ver
     # `Rol.modulos_ocultos` y la pantalla de "Permisos por Rol"). Se calcula
     # aquí (no en un endpoint aparte) porque cualquier empleado ya puede
@@ -165,4 +169,4 @@ class UserMeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserMetadata
-        fields = ("id", "email", "first_name", "last_name", "rol", "rol_codigo", "sucursal", "modulos_ocultos")
+        fields = ("id", "email", "first_name", "last_name", "rol", "rol_codigo", "sucursal", "departamento", "departamento_id", "modulos_ocultos")

@@ -11,10 +11,14 @@ _CENT = Decimal("0.01")
 
 
 class PublicOrderItemSerializer(serializers.Serializer):
-    # Coincide con el `id` que expone `PublicProductoSerializer`: hoy el
-    # catálogo público solo lista productos simples (`Producto`), no
-    # variantes -- ver nota en `PublicProductoSerializer`.
+    # `producto_id` siempre identifica el producto base (coincide con el
+    # `id` de `PublicProductoSerializer`); `variante_id`/`presentacion_id`
+    # son opcionales y vienen de las listas `variantes`/`presentaciones` de
+    # ESE MISMO producto -- nunca coexisten entre sí (una presentación es
+    # solo para productos simples, una variante es solo para 'variable').
     producto_id = serializers.IntegerField()
+    variante_id = serializers.IntegerField(required=False, allow_null=True)
+    presentacion_id = serializers.IntegerField(required=False, allow_null=True)
     cantidad = serializers.IntegerField(min_value=1)
 
 
@@ -82,18 +86,49 @@ class PublicEmpresaInfoSerializer(serializers.ModelSerializer):
         return None
 
 
-class PublicProductoSerializer(serializers.Serializer):
-    """
-    Representación de un `Producto` en el catálogo público.
+class PublicVariacionProductoSerializer(serializers.Serializer):
+    """Una variante (talla/color/etc.) comprable desde el catálogo público."""
+    id = serializers.IntegerField()
+    nombre = serializers.CharField()
+    precio = serializers.DecimalField(max_digits=10, decimal_places=2)
+    stock_disponible = serializers.SerializerMethodField()
+    imagen_url = serializers.SerializerMethodField()
 
-    Nota: solo cubre productos simples. `Variacionproducto` no se expone
-    todavía en el catálogo público (y `Reservastock` tampoco lo soporta a
-    nivel de variante) -- es la limitación conocida a resolver si un tenant
-    necesita vender variantes (talla/color) en su tienda pública.
-    """
+    def get_stock_disponible(self, obj):
+        # `Reservastock` no cubre variantes (ver `calcular_stock_disponible`)
+        # -- su stock vendible es directamente `cantidad`, sin reservas.
+        return max(obj.cantidad or 0, 0)
+
+    def get_imagen_url(self, obj):
+        request = self.context.get('request')
+        if obj.imagen and hasattr(obj.imagen, 'url') and request is not None:
+            return request.build_absolute_uri(obj.imagen.url)
+        return None
+
+
+class PublicPresentacionProductoSerializer(serializers.Serializer):
+    """Una presentación (Unidad/Bulto x12/Docena/etc.) comprable desde el catálogo público."""
+    id = serializers.IntegerField()
+    nombre = serializers.CharField()
+    factor_conversion = serializers.IntegerField()
+    precio = serializers.SerializerMethodField()
+    es_default = serializers.BooleanField()
+
+    def get_precio(self, obj):
+        # Igual que al vender: si no se fijó precio propio, se autocalcula
+        # como precio_unitario_base × factor (ver `PresentacionProducto.precio`).
+        if obj.precio is not None:
+            return str(obj.precio)
+        precio_base = obj.producto.precio or 0
+        return str(Decimal(precio_base) * obj.factor_conversion)
+
+
+class PublicProductoSerializer(serializers.Serializer):
+    """Representación de un `Producto` en el catálogo público."""
     id = serializers.IntegerField()
     nombre = serializers.CharField()
     descripcion = serializers.CharField()
+    tipo = serializers.CharField()
     precio_venta = serializers.DecimalField(max_digits=10, decimal_places=2, source='precio')
     base_imponible = serializers.SerializerMethodField()
     iva_monto = serializers.SerializerMethodField()
@@ -104,6 +139,22 @@ class PublicProductoSerializer(serializers.Serializer):
     imagen_url = serializers.SerializerMethodField()
     categoria_id = serializers.IntegerField(read_only=True, default=None)
     categoria_nombre = serializers.CharField(source='categoria.nombre', read_only=True, default=None)
+    # Solo se llenan para productos `tipo='variable'` (variantes) o que
+    # tengan presentaciones activas -- el storefront usa la presencia de
+    # estas listas para decidir si mostrar un selector antes de agregar al
+    # carrito, igual que ya hace el formulario de creación del panel.
+    variantes = serializers.SerializerMethodField()
+    presentaciones = serializers.SerializerMethodField()
+
+    def get_variantes(self, obj):
+        if obj.tipo != 'variable':
+            return []
+        activas = [v for v in obj.variacionproducto_set.all() if v.activo]
+        return PublicVariacionProductoSerializer(activas, many=True, context=self.context).data
+
+    def get_presentaciones(self, obj):
+        activas = [p for p in obj.presentaciones.all() if p.activo]
+        return PublicPresentacionProductoSerializer(activas, many=True, context=self.context).data
 
     def get_moneda_codigo(self, obj):
         moneda = obj.moneda or self._moneda_base()

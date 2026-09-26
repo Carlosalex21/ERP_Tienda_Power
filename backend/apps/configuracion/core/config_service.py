@@ -86,6 +86,22 @@ def obtener_y_actualizar_numero_control_nota_debito() -> str:
     return f"{config.prefijo_numero_control_nota_debito}{numero_formateado}"
 
 
+@transaction.atomic
+def obtener_y_actualizar_correlativo_nota_entrega() -> str:
+    """
+    Correlativo simple (no fiscal) para una Nota de Entrega -- secuencia
+    propia, independiente de la de facturas (ver
+    `ConfiguracionCorrelativo.prefijo_nota_entrega`).
+    """
+    config, _ = ConfiguracionCorrelativo.objects.select_for_update().get_or_create(pk=1)
+
+    config.current_number_nota_entrega += 1
+    config.save(update_fields=["current_number_nota_entrega"])
+
+    numero_formateado = str(config.current_number_nota_entrega).zfill(config.number_length_nota_entrega)
+    return f"{config.prefijo_nota_entrega}{numero_formateado}"
+
+
 @cached(ttl=settings.CACHE_TTL.get("configuraciones", 600), key_builder=lambda: ("configuraciones_globales",))
 def obtener_configuraciones() -> Dict[str, Any]:
     """

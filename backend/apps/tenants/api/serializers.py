@@ -118,6 +118,10 @@ class TenantRegistrationSerializer(serializers.Serializer):
         ),
     )
     plan_id = serializers.IntegerField(required=False, help_text="Opcional. ID del plan a contratar. Si no se provee, se asigna un plan de prueba.")
+    codigo_referido = serializers.CharField(
+        required=False, allow_blank=True, max_length=50,
+        help_text="Opcional. Subdominio del tenant que invitó a este registro (ver programa de referidos).",
+    )
     cantidad_mesas = serializers.IntegerField(
         required=False,
         default=6,
@@ -228,6 +232,31 @@ class TenantProfileSerializer(serializers.ModelSerializer):
     def get_subscription_status(self, obj):
         sub = getattr(obj, 'subscription', None)
         return TenantSubscriptionStatusSerializer.from_subscription(sub)
+
+
+class ReferidoItemSerializer(serializers.Serializer):
+    """Un tenant que este dueño invitó -- solo lo mínimo, nunca datos internos del referido."""
+    nombre_empresa = serializers.CharField()
+    fecha_registro = serializers.DateTimeField()
+    estado = serializers.CharField()
+
+    def to_representation(self, instance):
+        return {
+            'nombre_empresa': instance.referido.nombre_empresa,
+            'fecha_registro': instance.fecha_registro,
+            'estado': instance.estado,
+        }
+
+
+class ReferidoProgramaSerializer(serializers.Serializer):
+    """Resumen del programa de referidos para el dueño del tenant actual -- ver `ReferidoProgramaView`."""
+    codigo_referido = serializers.CharField()
+    link_invitacion = serializers.CharField()
+    total_referidos = serializers.IntegerField()
+    referidos_pendientes = serializers.IntegerField()
+    referidos_recompensados = serializers.IntegerField()
+    meses_ganados = serializers.IntegerField()
+    referidos = ReferidoItemSerializer(many=True)
 
 
 class TenantOnboardingUpdateSerializer(serializers.ModelSerializer):

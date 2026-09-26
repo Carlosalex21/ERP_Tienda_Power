@@ -119,6 +119,43 @@ class Client(TenantMixin):
 class Domain(DomainMixin):
     pass
 
+
+class Referido(models.Model):
+    """
+    Un tenant (`referido`) que se registró usando el enlace de invitación de
+    otro (`referente`) -- el código de invitación es directamente el
+    `schema_name` del referente (ya es único y URL-safe, no hace falta
+    inventar un campo/tabla de códigos aparte).
+
+    `estado` empieza en 'pendiente' al registrarse (todavía en período de
+    prueba, sin pagar nada) y pasa a 'recompensado' la primera vez que ese
+    tenant referido CONFIRMA un pago real de suscripción (ver
+    `apps.tenants.services.subscription_payment_service.confirmar_pago`) --
+    recién ahí se le suma `meses_bonus` de suscripción gratis A AMBOS
+    tenants. Un tenant de prueba que nunca paga nunca genera recompensa,
+    evitando que alguien se autoinvite con cuentas de prueba para ganar
+    meses gratis sin que la plataforma reciba un pago real de por medio.
+    """
+    ESTADO_CHOICES = (
+        ('pendiente', 'Pendiente de conversión'),
+        ('recompensado', 'Recompensado'),
+    )
+    referente = models.ForeignKey(Client, on_delete=models.CASCADE, related_name='referidos_hechos')
+    referido = models.OneToOneField(Client, on_delete=models.CASCADE, related_name='referido_de')
+    estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='pendiente')
+    meses_bonus = models.PositiveIntegerField(default=1)
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+    fecha_recompensa = models.DateTimeField(blank=True, null=True)
+
+    class Meta:
+        db_table = 'Referido'
+        ordering = ['-fecha_registro']
+        verbose_name = 'Referido'
+        verbose_name_plural = 'Referidos'
+
+    def __str__(self) -> str:
+        return f'{self.referente.schema_name} → {self.referido.schema_name} ({self.estado})'
+
 class Subscription(models.Model):
     client = models.OneToOneField(Client, on_delete=models.CASCADE, null=True, blank=True)
     plan = models.ForeignKey(Plan, on_delete=models.CASCADE)

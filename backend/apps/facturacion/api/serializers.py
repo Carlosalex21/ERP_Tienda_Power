@@ -10,7 +10,7 @@ from __future__ import annotations
 from rest_framework import serializers
 
 from apps.configuracion.models import ConfiguracionCorrelativo
-from apps.inventario.models import Producto, Variacionproducto
+from apps.inventario.models import PresentacionProducto, Producto, Variacionproducto
 
 from apps.facturacion.models import (
     Cupondescuento,
@@ -41,6 +41,7 @@ class DetallefacturaSerializer(serializers.ModelSerializer):
     """Serializer de lectura de detalle de factura (con nombre resuelto)."""
 
     nombre = serializers.SerializerMethodField()
+    presentacion_nombre = serializers.CharField(source="presentacion.nombre", read_only=True, default=None)
 
     class Meta:
         model = Detallefactura
@@ -55,12 +56,17 @@ class DetallefacturaSerializer(serializers.ModelSerializer):
             "total_linea",
             "producto",
             "variante",
+            "presentacion",
+            "presentacion_nombre",
         )
 
     def get_nombre(self, obj):
+        nombre = obj.producto.nombre
         if obj.variante is not None:
-            return f"{obj.producto.nombre} ({obj.variante.nombre})"
-        return obj.producto.nombre
+            nombre = f"{nombre} ({obj.variante.nombre})"
+        if obj.presentacion is not None:
+            nombre = f"{nombre} - {obj.presentacion.nombre}"
+        return nombre
 
 
 class DetallefacturaWriteSerializer(serializers.ModelSerializer):
@@ -70,10 +76,16 @@ class DetallefacturaWriteSerializer(serializers.ModelSerializer):
     variante = serializers.PrimaryKeyRelatedField(
         queryset=Variacionproducto.objects.all(), required=False, allow_null=True
     )
+    # `cantidad` sigue siendo "cuántas unidades de ESTA presentación" (ej. 2
+    # significa "2 bultos", no "2 unidades base") -- la conversión a unidades
+    # base para descontar stock vive en `afectar_inventario_por_venta`.
+    presentacion = serializers.PrimaryKeyRelatedField(
+        queryset=PresentacionProducto.objects.all(), required=False, allow_null=True
+    )
 
     class Meta:
         model = Detallefactura
-        fields = ("producto", "variante", "cantidad", "precio_unitario", "descuento")
+        fields = ("producto", "variante", "presentacion", "cantidad", "precio_unitario", "descuento")
 
 
 class FacturaSerializer(serializers.ModelSerializer):
@@ -86,6 +98,13 @@ class FacturaSerializer(serializers.ModelSerializer):
     moneda_codigo = serializers.CharField(source="moneda.codigo", read_only=True, default=None)
     moneda_nombre = serializers.CharField(source="moneda.nombre", read_only=True, default=None)
     vendedor_nombre = serializers.SerializerMethodField()
+    departamento_preparacion_nombre = serializers.CharField(source="departamento_preparacion.nombre", read_only=True, default=None)
+    preparado_por_nombre = serializers.SerializerMethodField()
+
+    def get_preparado_por_nombre(self, obj):
+        if not obj.preparado_por:
+            return None
+        return obj.preparado_por.get_full_name() or obj.preparado_por.username
 
     class Meta:
         model = Factura
@@ -122,6 +141,13 @@ class FacturaSerializer(serializers.ModelSerializer):
             "activo",
             "nombre_cliente_pendiente",
             "comentario_pendiente",
+            "inventario_afectado",
+            "estado_preparacion",
+            "departamento_preparacion",
+            "departamento_preparacion_nombre",
+            "preparado_por",
+            "preparado_por_nombre",
+            "fecha_preparado",
             "detalles",
             "detalles_para_crear",
         )
@@ -144,6 +170,10 @@ class FacturaSerializer(serializers.ModelSerializer):
             "total_base",
             "correlativo",
             "numero_control",
+            "inventario_afectado",
+            "estado_preparacion",
+            "preparado_por",
+            "fecha_preparado",
         )
 
     def get_vendedor_nombre(self, obj):

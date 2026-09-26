@@ -91,12 +91,38 @@ class CuentaContable(models.Model):
         ('deudora', 'Deudora (Débito)'),
         ('acreedora', 'Acreedora (Crédito)'),
     )
+    # Etiqueta semántica opcional que identifica el ROL de negocio de una
+    # cuenta (ej. "esta es LA cuenta de Inventario", "esta es LA cuenta de
+    # Costo de Venta") -- sin esto, los servicios que generan asientos
+    # automáticos (ventas, ajustes de inventario) no tenían ninguna forma
+    # genérica de saber a qué cuenta debitar/acreditar salvo hardcodear un
+    # código de plan de cuentas (frágil: se rompe si el usuario renumera su
+    # plan). A lo sumo una cuenta activa por (empresa, rol) -- no se fuerza
+    # a nivel de base de datos porque un plan de cuentas real a veces
+    # necesita dejar una etiqueta "huérfana" temporalmente al reorganizar.
+    ROL_CHOICES = (
+        ('caja', 'Caja'),
+        ('banco', 'Bancos'),
+        ('cuentas_por_cobrar', 'Cuentas por Cobrar'),
+        ('inventario', 'Inventario'),
+        ('iva_por_cobrar', 'IVA Crédito Fiscal (por cobrar)'),
+        ('iva_por_pagar', 'IVA Débito Fiscal (por pagar)'),
+        ('cuentas_por_pagar', 'Cuentas por Pagar Proveedores'),
+        ('ventas', 'Ingresos por Ventas'),
+        ('costo_venta', 'Costo de Ventas'),
+        ('otros_ingresos', 'Otros Ingresos'),
+        ('gasto_sueldos', 'Gasto de Sueldos y Salarios'),
+    )
 
     empresa = models.ForeignKey(EmpresaContable, on_delete=models.CASCADE, related_name='cuentas')
     codigo = models.CharField(max_length=20, help_text='Ej. "1.1.01".')
     nombre = models.CharField(max_length=150)
     tipo = models.CharField(max_length=12, choices=TIPO_CHOICES)
     naturaleza = models.CharField(max_length=10, choices=NATURALEZA_CHOICES)
+    rol = models.CharField(
+        max_length=20, choices=ROL_CHOICES, blank=True, null=True,
+        help_text='Rol de negocio de esta cuenta (opcional) -- permite que los asientos automáticos (ventas, ajustes de inventario) encuentren la cuenta correcta sin depender de su código.',
+    )
     cuenta_padre = models.ForeignKey(
         'self', on_delete=models.PROTECT, null=True, blank=True, related_name='subcuentas',
     )
@@ -134,6 +160,9 @@ class AsientoContable(models.Model):
         ('manual', 'Manual'),
         ('honorarios', 'Facturación de Honorarios'),
         ('venta', 'Venta del Sistema'),
+        ('ajuste_inventario', 'Ajuste de Inventario'),
+        ('pago_proveedor', 'Pago a Proveedor'),
+        ('nomina', 'Nómina'),
         ('cierre', 'Cierre de Ejercicio'),
     )
 
@@ -146,7 +175,7 @@ class AsientoContable(models.Model):
     # filtran `estado='contabilizado'`, así que un borrador es invisible
     # para libro mayor/balance/estados hasta que se contabilice).
     estado = models.CharField(max_length=15, choices=ESTADO_CHOICES, default='contabilizado')
-    origen = models.CharField(max_length=10, choices=ORIGEN_CHOICES, default='manual')
+    origen = models.CharField(max_length=20, choices=ORIGEN_CHOICES, default='manual')
     usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True)
     fecha_creacion = models.DateTimeField(auto_now_add=True)
     fecha_anulacion = models.DateTimeField(null=True, blank=True)

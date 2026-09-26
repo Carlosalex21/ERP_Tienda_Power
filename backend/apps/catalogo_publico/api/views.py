@@ -82,7 +82,9 @@ class CatalogoPublicoView(generics.GenericAPIView):
         # olvide desmarcar también "disponible online" -- son dos banderas
         # con intención distinta (una es "no se vende en línea", la otra es
         # "no se ofrece directamente, punto").
-        return Producto.objects.select_related('moneda', 'configuracion_iva', 'categoria').filter(
+        return Producto.objects.select_related('moneda', 'configuracion_iva', 'categoria').prefetch_related(
+            'variacionproducto_set', 'presentaciones',
+        ).filter(
             activo=True, disponible_online=True, es_insumo=False,
         ).order_by('nombre')
 

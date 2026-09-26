@@ -20,6 +20,10 @@ from ..models import (
 class ConfiguracionEmpresaSerializer(serializers.ModelSerializer):
     """Serializer de la configuración de la empresa del tenant."""
 
+    # Solo escritura -- el PIN nunca se devuelve (ni siquiera hasheado) en
+    # ninguna respuesta. Vacío/ausente = no tocar el PIN ya guardado.
+    pin = serializers.CharField(write_only=True, required=False, allow_blank=True)
+
     class Meta:
         model = ConfiguracionEmpresa
         fields = (
@@ -29,7 +33,20 @@ class ConfiguracionEmpresaSerializer(serializers.ModelSerializer):
             "telefono",
             "direccion",
             "logo",
+            "requiere_pin_eliminar",
+            "pin",
+            "mensaje_whatsapp_venta",
         )
+
+    def update(self, instance, validated_data):
+        pin = validated_data.pop('pin', None)
+        instance = super().update(instance, validated_data)
+        if pin:
+            if not (pin.isdigit() and 4 <= len(pin) <= 6):
+                raise serializers.ValidationError({"pin": "El PIN debe tener entre 4 y 6 dígitos numéricos."})
+            from ..services.pin_service import establecer_pin
+            establecer_pin(pin)
+        return instance
 
 
 class IvaSerializer(serializers.ModelSerializer):
