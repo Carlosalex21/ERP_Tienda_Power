@@ -210,6 +210,9 @@ MIDDLEWARE = [
     # nunca pasaría por él en el camino de vuelta y el navegador la
     # bloqueaba por CORS (net::ERR_FAILED) en vez de mostrar el 402.
     "apps.tenants.middleware.SubscriptionGateMiddleware",
+    # Igual de temprano y por el mismo motivo (CORS): 403 si el plan no
+    # incluye el módulo dueño de la ruta (ver `apps.tenants.modulos`).
+    "apps.tenants.middleware.PlanModulosMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",

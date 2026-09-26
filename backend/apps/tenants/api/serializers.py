@@ -3,6 +3,7 @@ from datetime import date
 from rest_framework import serializers
 from django.contrib.auth.models import User
 from ..models import Plan, Subscription, Client, Domain, PlatformPaymentConfig, SubscriptionPayment, PlatformSettings
+from apps.tenants.modulos import CODIGOS_MODULOS, modulos_del_plan
 
 # --- Serializers existentes (inferidos de tus vistas) ---
 
@@ -10,6 +11,13 @@ class PlanSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plan
         fields = '__all__'
+
+    def validate_modulos(self, value):
+        desconocidos = sorted(set(value) - CODIGOS_MODULOS)
+        if desconocidos:
+            raise serializers.ValidationError(f"Módulos desconocidos: {', '.join(desconocidos)}.")
+        # Sin duplicados y en orden estable.
+        return sorted(set(value))
 
 class SubscriptionCreateSerializer(serializers.Serializer):
     client_id = serializers.IntegerField(required=True)
@@ -186,6 +194,8 @@ class TenantSubscriptionStatusSerializer(serializers.Serializer):
     is_active = serializers.BooleanField()
     dias_restantes = serializers.IntegerField(allow_null=True)
     es_prueba = serializers.BooleanField()
+    # Módulos que incluye el plan contratado; `None` = todos (ver `Plan.modulos`).
+    modulos_plan = serializers.ListField(child=serializers.CharField(), allow_null=True)
 
     @staticmethod
     def from_subscription(sub):
@@ -194,6 +204,7 @@ class TenantSubscriptionStatusSerializer(serializers.Serializer):
                 'plan_id': None, 'plan_nombre': None, 'plan_slug': None, 'plan_precio': None,
                 'estado': None, 'fecha_fin': None,
                 'is_active': False, 'dias_restantes': None, 'es_prueba': False,
+                'modulos_plan': None,
             }
         # `date.today()`, no `timezone.now().date()` -- mismo motivo que
         # `Subscription.is_active` (ver apps.tenants.models): `fecha_fin` se
@@ -209,6 +220,7 @@ class TenantSubscriptionStatusSerializer(serializers.Serializer):
             'is_active': sub.is_active,
             'dias_restantes': dias_restantes,
             'es_prueba': bool(sub.plan and sub.plan.nombre == 'Plan de Prueba'),
+            'modulos_plan': sorted(modulos) if (modulos := modulos_del_plan(sub.plan)) is not None else None,
         }
 
 

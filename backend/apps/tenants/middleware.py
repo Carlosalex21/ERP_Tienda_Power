@@ -76,3 +76,45 @@ class SubscriptionGateMiddleware:
         # `apps.tenants.models.Subscription.is_active`); comparar contra la
         # fecha de `timezone.now()` puede bloquear un día antes de tiempo.
         return date.today() > limite
+
+
+class PlanModulosMiddleware:
+    """
+    Bloquea (403) los endpoints de un módulo que el plan del tenant no
+    incluye -- sin esto, ocultar el módulo en el panel no impedía usarlo
+    llamando a la API directamente. Solo actúa sobre las rutas exclusivas de
+    cada módulo (ver `apps.tenants.modulos`); va después de
+    `SubscriptionGateMiddleware`, que ya resolvió `request.tenant`.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        codigo = None if request.method == 'OPTIONS' else self._modulo_bloqueado(request)
+        if codigo:
+            return JsonResponse(
+                {
+                    "error": "modulo_no_incluido",
+                    "modulo": codigo,
+                    "detail": "Este módulo no está incluido en tu plan. Mejora tu plan para usarlo.",
+                },
+                status=403,
+            )
+        return self.get_response(request)
+
+    @staticmethod
+    def _modulo_bloqueado(request) -> str | None:
+        from apps.tenants.modulos import modulo_de_ruta
+
+        tenant = getattr(request, 'tenant', None)
+        if tenant is None or tenant.schema_name == get_public_schema_name():
+            return None
+        codigo = modulo_de_ruta(request.path)
+        if codigo is None:
+            return None
+        sub = getattr(tenant, 'subscription', None)
+        plan = getattr(sub, 'plan', None) if sub is not None else None
+        if plan is None or plan.incluye_modulo(codigo):
+            return None
+        return codigo

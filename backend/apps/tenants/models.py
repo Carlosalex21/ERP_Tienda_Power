@@ -56,9 +56,23 @@ class Plan(models.Model):
         default=list,
         help_text="Tipos de negocio a los que aplica este plan. Vacío = aplica a todos.",
     )
+    # Módulos del panel que incluye el plan (códigos de
+    # `apps.tenants.modulos.MODULOS_COMERCIALES`) -- permite cobrar por
+    # módulos: ej. un plan básico con cobros y asientos, y los libros
+    # contables/fiscales solo en uno superior. Vacío = incluye todos (así los
+    # planes existentes no pierden nada al agregar este campo).
+    modulos = ArrayField(
+        models.CharField(max_length=40),
+        blank=True,
+        default=list,
+        help_text="Módulos incluidos en el plan. Vacío = todos.",
+    )
 
     def __str__(self):
         return self.nombre
+
+    def incluye_modulo(self, codigo: str) -> bool:
+        return not self.modulos or codigo in self.modulos
 
     def aplica_a(self, tipo_negocio: str | None) -> bool:
         """``True`` si el plan se le puede ofrecer/cobrar a un tenant de ``tipo_negocio``."""
