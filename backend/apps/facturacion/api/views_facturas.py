@@ -27,7 +27,17 @@ class FacturaViewSet(viewsets.ModelViewSet):
     """
     ViewSet para la gestión completa de Facturas (Listar, Crear, Obtener, Actualizar, Eliminar).
     """
-    queryset = Factura.objects.select_related('cliente', 'usuario', 'metodo_pago').prefetch_related('detalles__producto').order_by('-fecha_operacion')
+    # Todas las relaciones que lee `FacturaSerializer` (moneda, vendedor,
+    # preparado_por, departamento y, por línea, variante/presentación):
+    # antes faltaban y un listado de 50 facturas disparaba ~220 consultas.
+    queryset = (
+        Factura.objects.select_related(
+            'cliente', 'usuario', 'vendedor', 'metodo_pago', 'moneda',
+            'preparado_por', 'departamento_preparacion',
+        )
+        .prefetch_related('detalles__producto', 'detalles__variante', 'detalles__presentacion')
+        .order_by('-fecha_operacion', '-id')
+    )
     serializer_class = FacturaSerializer
     # Permite `?estado=pendiente` -- usado por el panel de Pedidos para no
     # traer/filtrar en el cliente todo el historial de facturas solo para

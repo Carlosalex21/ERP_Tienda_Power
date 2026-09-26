@@ -26,7 +26,7 @@ class ProductoViewSet(viewsets.ModelViewSet):
     # sin queries adicionales por producto.
     queryset = Producto.objects.select_related('configuracion_iva', 'moneda').prefetch_related(
         'variacionproducto_set', 'presentaciones',
-    ).filter(activo=True)
+    ).filter(activo=True).order_by('nombre', 'id')
     serializer_class = ProductoSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -66,7 +66,7 @@ class VariacionproductoViewSet(viewsets.ModelViewSet):
     ViewSet para la gestión de las Variaciones de un Producto.
     Permite crear, leer, actualizar y eliminar (baja lógica) variaciones.
     """
-    queryset = Variacionproducto.objects.select_related('producto').filter(activo=True)
+    queryset = Variacionproducto.objects.select_related('producto').filter(activo=True).order_by('producto_id', 'id')
     serializer_class = VariacionproductoSerializer
     permission_classes = [permissions.IsAuthenticated]
 
@@ -87,7 +87,7 @@ class PresentacionProductoViewSet(viewsets.ModelViewSet):
     ViewSet para las presentaciones de venta de un Producto (Unidad, Caja,
     Bulto...). Ver el docstring de `PresentacionProducto` para el diseño.
     """
-    queryset = PresentacionProducto.objects.select_related('producto').filter(activo=True)
+    queryset = PresentacionProducto.objects.select_related('producto').filter(activo=True).order_by('producto_id', 'id')
     serializer_class = PresentacionProductoSerializer
     permission_classes = [permissions.IsAuthenticated]
 

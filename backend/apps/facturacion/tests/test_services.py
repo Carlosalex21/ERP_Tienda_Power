@@ -6,7 +6,7 @@ from django.utils import timezone
 from apps.facturacion.models import Factura, Detallefactura
 from apps.inventario.models import Producto, Variacionproducto, Inventario
 from apps.clientes.models import Cliente
-from apps.configuracion.models import ConfiguracionCorrelativo
+from apps.configuracion.models import ConfiguracionCorrelativo, Moneda
 from apps.facturacion.services.order_service import crear_orden_desde_pedido_publico, OrderCreationError
 from apps.facturacion.services.factura_service import anular_factura_y_restaurar_stock, FacturaAnulacionError
 
@@ -17,6 +17,8 @@ User = get_user_model()
 class FacturacionServiceTests(TenantTestCase):
 
     def setUp(self):
+        # Todo tenant real nace con su moneda base (el pedido se totaliza en ella).
+        Moneda.objects.get_or_create(codigo='VES', defaults={'nombre': 'Bolívar', 'simbolo': 'Bs.', 'es_predeterminada': True})
         self.user = User.objects.create_user(username='testuser', email='test@example.com', password='password')
         self.cliente = Cliente.objects.create(nombre='Cliente Test', telefono='123456789')
         self.producto = Producto.objects.create(nombre='Producto Test', cantidad=10, precio=100, disponible_online=True, sku='PT001')
@@ -58,7 +60,10 @@ class FacturacionServiceTests(TenantTestCase):
             fecha_operacion=timezone.now(),
             subtotal=300,
             iva_total=0,
-            total=300
+            total=300,
+            # La venta ya descontó el stock: solo así la anulación lo restaura
+            # (ver `anular_factura_y_restaurar_stock`).
+            inventario_afectado=True,
         )
         # Asociamos el detalle con la variación específica que se vendió
         Detallefactura.objects.create(factura=factura, producto=self.producto, variante=self.variacion, cantidad=3, precio_unitario=100, subtotal_linea=300, total_linea=300)

@@ -28,7 +28,7 @@ def get_working_days(year, month):
 
 class SucursalViewSet(viewsets.ModelViewSet):
     """Administra las sucursales del tenant."""
-    queryset = Sucursal.objects.all()
+    queryset = Sucursal.objects.all().order_by('nombre', 'id')
     serializer_class = SucursalSerializer
     permission_classes = [IsTenantAdmin]
 

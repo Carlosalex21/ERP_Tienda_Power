@@ -4,6 +4,7 @@ from django.contrib.auth import get_user_model
 from rest_framework.test import APIRequestFactory
 
 from apps.core.testing import BaseTenantTestCase as TenantTestCase
+from apps.configuracion.models import Moneda
 from apps.inventario.models import Producto
 
 from ..api.views import CatalogoPublicoView, CrearPedidoPublicoView
@@ -20,6 +21,7 @@ class CatalogoPublicoViewTests(TenantTestCase):
     """
 
     def setUp(self):
+        Moneda.objects.get_or_create(codigo='VES', defaults={'nombre': 'Bolívar', 'simbolo': 'Bs.', 'es_predeterminada': True})
         self.factory = APIRequestFactory()
         # CrearPedidoPublicoView atribuye el pedido al primer superusuario del tenant.
         User.objects.create_user(username='owner', password='x', is_superuser=True, is_staff=True)

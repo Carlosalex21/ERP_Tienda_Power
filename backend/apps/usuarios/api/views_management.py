@@ -11,7 +11,7 @@ class UserManagementViewSet(viewsets.ModelViewSet):
     Permite a los administradores del tenant gestionar a sus empleados
     (invitar, ver, activar/desactivar, asignar rol).
     """
-    queryset = UserMetadata.objects.all().select_related('user', 'rol', 'sucursal')
+    queryset = UserMetadata.objects.all().select_related('user', 'rol', 'sucursal').order_by('user__first_name', 'user__last_name', 'id')
     serializer_class = UserManagedSerializer
     permission_classes = [IsTenantAdmin]
 

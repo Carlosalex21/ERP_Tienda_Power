@@ -142,7 +142,7 @@ class ConfiguracionCorrelativoView(APIView):
 class IvaViewSet(viewsets.ModelViewSet):
     """Administra las configuraciones de IVA."""
 
-    queryset = Configuracioniva.objects.all()
+    queryset = Configuracioniva.objects.all().order_by('-activo', 'porcentaje_iva', 'id')
     serializer_class = IvaSerializer
     permission_classes = [IsTenantAdmin]
 
