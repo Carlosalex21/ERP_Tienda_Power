@@ -5,6 +5,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 
 from apps.reportes.core.dashboard_service import obtener_metricas_dashboard
+from apps.reportes.core.moneda_reporte import resolver_moneda_reporte
 from apps.reportes.api.serializers import DashboardResponseSerializer
 
 class DashboardDataView(APIView):
@@ -18,6 +19,7 @@ class DashboardDataView(APIView):
         parameters=[
             OpenApiParameter(name='start_date', description='Fecha de inicio (YYYY-MM-DD)', type=OpenApiTypes.DATE),
             OpenApiParameter(name='end_date', description='Fecha de fin (YYYY-MM-DD)', type=OpenApiTypes.DATE),
+            OpenApiParameter(name='moneda', description="Moneda de los montos: 'base' (defecto), 'referencia' o código ISO", type=OpenApiTypes.STR),
         ],
         responses={200: DashboardResponseSerializer}
     )
@@ -25,7 +27,8 @@ class DashboardDataView(APIView):
         start_date = request.query_params.get('start_date')
         end_date = request.query_params.get('end_date')
 
-        data = obtener_metricas_dashboard(start_date, end_date, request.user) # Asegúrate que obtener_metricas_dashboard use select_related/prefetch_related internamente
+        moneda = resolver_moneda_reporte(request.query_params.get('moneda'))
+        data = obtener_metricas_dashboard(start_date, end_date, request.user, moneda)
 
         # Métricas propias del vertical contador (no vende bienes físicos,
         # las tarjetas de inventario/stock de arriba no le aplican) -- import

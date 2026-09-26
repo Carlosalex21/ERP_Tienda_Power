@@ -7,6 +7,13 @@ from decimal import Decimal
 from apps.facturacion.models import Factura, Detallefactura
 from apps.clientes.models import Cliente
 from apps.inventario.models import Producto, Variacionproducto
+from apps.reportes.core.moneda_reporte import (
+    MonedaReporte,
+    convertir_desde_base,
+    monto_documento,
+    monto_linea_factura,
+    resolver_moneda_reporte,
+)
 
 # Ventana histórica usada para estimar la velocidad de venta (unidades/día)
 # de cada producto, y a cuántos días de quiebre de stock se le da la voz de
@@ -85,11 +92,16 @@ def _agregar_si_en_riesgo(alertas, nombre, sku, cantidad_actual, unidades_vendid
         'dias_restantes': round(dias_restantes, 1),
     })
 
-def obtener_metricas_dashboard(start_date_str, end_date_str, user):
+def obtener_metricas_dashboard(start_date_str, end_date_str, user, moneda: MonedaReporte | None = None):
     """
     Calcula todas las métricas para el panel principal:
     Resumen, Gráficos, Top Productos y Bajo Stock.
+
+    Todos los montos salen en ``moneda`` (base por defecto) -- ver
+    ``apps.reportes.core.moneda_reporte`` para el criterio de conversión.
     """
+    moneda = moneda or resolver_moneda_reporte(None)
+    monto = monto_documento(moneda)
     # 1. Filtro de fechas -- `date.today()`, no `timezone.now().date()`: ver
     # la nota equivalente en `apps.configuracion.services.bcv_service` sobre
     # por qué mezclar ambas puede desalinear un día el rango "últimos 30 días"
@@ -102,12 +114,16 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
     ventas_queryset = base_queryset.exclude(estado__iexact='cancelada')
 
     # 2. Tarjetas de Resumen
+    # Antes: `Sum('total')`, que sumaba facturas en Bs. y en $ como si
+    # fueran la misma moneda.
     resumen = ventas_queryset.aggregate(
-        total_vendido=Coalesce(Sum('total'), Decimal('0.0')),
-        total_pagado=Coalesce(Sum('total', filter=Q(estado__iexact='pagado')), Decimal('0.0')),
-        total_pendiente=Coalesce(Sum('total', filter=Q(estado__iexact='pendiente')), Decimal('0.0')),
+        total_vendido=Coalesce(Sum(monto), Decimal('0.0')),
+        total_pagado=Coalesce(Sum(monto, filter=Q(estado__iexact='pagado')), Decimal('0.0')),
+        total_pendiente=Coalesce(Sum(monto, filter=Q(estado__iexact='pendiente')), Decimal('0.0')),
         num_transacciones=Count('id')
     )
+    for clave in ('total_vendido', 'total_pagado', 'total_pendiente'):
+        resumen[clave] = _redondear(resumen[clave])
 
     # 2.1. Variación vs. el período inmediatamente anterior, de la misma
     # duración (ej. si el rango son los últimos 30 días, se compara contra
@@ -119,7 +135,7 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
     total_vendido_anterior = Factura.objects.filter(
         fecha_operacion__date__range=[prev_start, prev_end],
     ).exclude(estado__iexact='cancelada').aggregate(
-        total=Coalesce(Sum('total'), Decimal('0.0')),
+        total=Coalesce(Sum(monto), Decimal('0.0')),
     )['total']
 
     total_vendido_actual = resumen['total_vendido']
@@ -137,7 +153,7 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
 
     # 3. Gráfico de Ventas Diarias
     ventas_por_dia_qs = ventas_queryset.values('fecha_operacion__date').annotate(
-        total=Coalesce(Sum('total'), Decimal('0.0'))
+        total=Coalesce(Sum(monto), Decimal('0.0'))
     ).order_by('fecha_operacion__date')
 
     sales_map = {item['fecha_operacion__date']: item['total'] for item in ventas_por_dia_qs}
@@ -145,7 +161,7 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
 
     grafico_ventas = {
         'labels': [d.strftime('%d/%m') for d in all_dates],
-        'data': [float(sales_map.get(d, 0)) for d in all_dates]
+        'data': [round(float(sales_map.get(d, 0)), 2) for d in all_dates]
     }
 
     # 4. Productos más vendidos (cantidad E ingresos -- antes solo se
@@ -156,13 +172,12 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
         .values('producto__nombre', 'variante__nombre')
         .annotate(
             cantidad_total=Coalesce(Sum('cantidad'), 0),
-            ingresos_total=Coalesce(
-                Sum(F('cantidad') * F('precio_unitario'), output_field=DecimalField()),
-                Decimal('0.0'),
-            ),
+            ingresos_total=Coalesce(Sum(monto_linea_factura(moneda)), Decimal('0.0')),
         )
         .order_by('-cantidad_total')[:5]
     )
+    for fila in productos_mas_vendidos:
+        fila['ingresos_total'] = _redondear(fila['ingresos_total'])
 
     # 5. Bajo Stock: se guarda tanto el TOTAL real (para la tarjeta de
     # conteo) como los primeros 5 (para la lista) -- antes el frontend usaba
@@ -194,23 +209,10 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
     # real. Para productos de tipo 'variable' el costo/cantidad reales viven
     # en cada variante, no en el producto padre -- se suman ambas fuentes
     # para no subestimar el valor de un catálogo con productos variables.
-    from apps.inventario.models import Variacionproducto
-
-    valor_productos_simples = Producto.objects.filter(activo=True).exclude(tipo='variable').aggregate(
-        valor=Coalesce(
-            Sum(F('costo_promedio') * F('cantidad'), output_field=DecimalField()),
-            Decimal('0.0'),
-        )
-    )['valor']
-    valor_variantes = Variacionproducto.objects.filter(producto__activo=True).aggregate(
-        valor=Coalesce(
-            Sum(F('costo_promedio') * F('cantidad'), output_field=DecimalField()),
-            Decimal('0.0'),
-        )
-    )['valor']
-    valor_inventario = valor_productos_simples + valor_variantes
+    valor_inventario = _redondear(convertir_desde_base(_valor_inventario_en_base(), moneda))
 
     return {
+        'moneda': moneda.as_dict(),
         'userInfo': {'nombre': user.get_full_name() or user.username},
         'resumen': resumen,
         'graficoVentas': grafico_ventas,
@@ -225,3 +227,49 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user):
             'productos_bajo_stock_count': bajo_stock_total,
         }
     }
+
+def _redondear(valor) -> Decimal:
+    return Decimal(valor or 0).quantize(Decimal('0.01'))
+
+
+def _valor_inventario_en_base() -> Decimal:
+    """
+    Costo (``costo_promedio``) x cantidad de todo el stock, en moneda base.
+
+    El costo está en la moneda del producto (``Producto.moneda``; vacío =
+    base), así que se agrupa por moneda y se convierte cada grupo a la tasa
+    vigente -- antes se sumaban costos en $ y en Bs. como si fueran lo mismo.
+    """
+    from apps.configuracion.services.conversion_service import get_moneda_base, get_tasa_vigente
+    from apps.configuracion.models import Moneda
+
+    valor_expr = Sum(F('costo_promedio') * F('cantidad'), output_field=DecimalField())
+    por_moneda: dict[int | None, Decimal] = {}
+    simples = (
+        Producto.objects.filter(activo=True).exclude(tipo='variable')
+        .values('moneda_id').annotate(valor=Coalesce(valor_expr, Decimal('0.0')))
+    )
+    variantes = (
+        Variacionproducto.objects.filter(producto__activo=True)
+        .values('producto__moneda_id').annotate(valor=Coalesce(valor_expr, Decimal('0.0')))
+    )
+    for fila in simples:
+        por_moneda[fila['moneda_id']] = por_moneda.get(fila['moneda_id'], Decimal('0')) + fila['valor']
+    for fila in variantes:
+        clave = fila['producto__moneda_id']
+        por_moneda[clave] = por_moneda.get(clave, Decimal('0')) + fila['valor']
+
+    base_id = get_moneda_base().id
+    codigos = dict(Moneda.objects.filter(id__in=[k for k in por_moneda if k]).values_list('id', 'codigo'))
+    total = Decimal('0')
+    for moneda_id, valor in por_moneda.items():
+        if not valor:
+            continue
+        if moneda_id is None or moneda_id == base_id:
+            total += valor
+            continue
+        try:
+            total += valor * get_tasa_vigente(codigos[moneda_id])
+        except Exception:  # noqa: BLE001 - sin tasa, mejor omitir que inventar un valor
+            continue
+    return total

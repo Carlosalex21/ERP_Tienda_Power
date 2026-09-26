@@ -12,6 +12,7 @@ from django.db.models import Sum, Count, F, DecimalField
 from django.db.models.functions import Coalesce, TruncMonth, ExtractWeekDay
 
 from apps.facturacion.models import Factura, Detallefactura
+from apps.reportes.core.moneda_reporte import MonedaReporte, monto_documento, monto_linea_factura, resolver_moneda_reporte
 
 MESES_TENDENCIA_DEFAULT = 12
 MESES_TOP_PRODUCTOS_DEFAULT = 3
@@ -30,8 +31,9 @@ def _primer_dia_mes(anchor: date, meses_atras: int) -> date:
     return date(anio, mes, 1)
 
 
-def obtener_tendencia_mensual(meses: int = MESES_TENDENCIA_DEFAULT) -> list[dict]:
+def obtener_tendencia_mensual(meses: int = MESES_TENDENCIA_DEFAULT, moneda: MonedaReporte | None = None) -> list[dict]:
     """Total vendido y número de facturas por mes, de los últimos `meses` (incluye el actual)."""
+    moneda = moneda or resolver_moneda_reporte(None)
     hoy = date.today()
     desde = _primer_dia_mes(hoy, meses - 1)
 
@@ -41,7 +43,7 @@ def obtener_tendencia_mensual(meses: int = MESES_TENDENCIA_DEFAULT) -> list[dict
         .annotate(mes=TruncMonth('fecha_operacion'))
         .values('mes')
         .annotate(
-            total=Coalesce(Sum('total_base'), Decimal('0.0')),
+            total=Coalesce(Sum(monto_documento(moneda)), Decimal('0.0')),
             num_facturas=Count('id'),
         )
         .order_by('mes')
@@ -56,14 +58,15 @@ def obtener_tendencia_mensual(meses: int = MESES_TENDENCIA_DEFAULT) -> list[dict
             'anio': mes_inicio.year,
             'mes': mes_inicio.month,
             'label': f"{NOMBRES_MES[mes_inicio.month - 1]} {mes_inicio.year % 100:02d}",
-            'total': float(entrada['total']) if entrada else 0.0,
+            'total': round(float(entrada['total']), 2) if entrada else 0.0,
             'num_facturas': entrada['num_facturas'] if entrada else 0,
         })
     return resultado
 
 
-def obtener_comparativa_mensual(tendencia: list[dict] | None = None) -> dict:
+def obtener_comparativa_mensual(tendencia: list[dict] | None = None, moneda: MonedaReporte | None = None) -> dict:
     """Mes actual (a la fecha de hoy) contra el mismo tramo de días del mes anterior."""
+    moneda = moneda or resolver_moneda_reporte(None)
     hoy = date.today()
     inicio_mes_actual = hoy.replace(day=1)
     inicio_mes_anterior = _primer_dia_mes(hoy, 1)
@@ -77,7 +80,7 @@ def obtener_comparativa_mensual(tendencia: list[dict] | None = None) -> dict:
         return Factura.objects.filter(
             fecha_operacion__date__gte=desde, fecha_operacion__date__lte=hasta,
         ).exclude(estado__iexact='cancelada').aggregate(
-            total=Coalesce(Sum('total_base'), Decimal('0.0')),
+            total=Coalesce(Sum(monto_documento(moneda)), Decimal('0.0')),
         )['total']
 
     total_actual = _total_rango(inicio_mes_actual, dias_transcurridos)
@@ -91,8 +94,8 @@ def obtener_comparativa_mensual(tendencia: list[dict] | None = None) -> dict:
         variacion_pct = None
 
     return {
-        'total_mes_actual': float(total_actual),
-        'total_mes_anterior_mismo_tramo': float(total_anterior_comparable),
+        'total_mes_actual': round(float(total_actual), 2),
+        'total_mes_anterior_mismo_tramo': round(float(total_anterior_comparable), 2),
         'dias_comparados': dias_transcurridos + 1,
         'variacion_pct': variacion_pct,
     }
@@ -145,27 +148,29 @@ def obtener_proyeccion_proximo_mes(tendencia: list[dict]) -> dict | None:
     }
 
 
-def obtener_top_productos_periodo(meses: int = MESES_TOP_PRODUCTOS_DEFAULT, limite: int = 10) -> list[dict]:
+def obtener_top_productos_periodo(meses: int = MESES_TOP_PRODUCTOS_DEFAULT, limite: int = 10, moneda: MonedaReporte | None = None) -> list[dict]:
+    moneda = moneda or resolver_moneda_reporte(None)
     hoy = date.today()
     desde = _primer_dia_mes(hoy, meses - 1)
     ventas_qs = Factura.objects.filter(fecha_operacion__date__gte=desde).exclude(estado__iexact='cancelada')
 
-    return list(
+    filas = list(
         Detallefactura.objects.filter(factura__in=ventas_qs)
         .values('producto__nombre', 'variante__nombre')
         .annotate(
             cantidad_total=Coalesce(Sum('cantidad'), 0),
-            ingresos_total=Coalesce(
-                Sum(F('cantidad') * F('precio_unitario'), output_field=DecimalField()),
-                Decimal('0.0'),
-            ),
+            ingresos_total=Coalesce(Sum(monto_linea_factura(moneda)), Decimal('0.0')),
         )
         .order_by('-ingresos_total')[:limite]
     )
+    for fila in filas:
+        fila['ingresos_total'] = Decimal(fila['ingresos_total']).quantize(Decimal('0.01'))
+    return filas
 
 
-def obtener_ventas_por_dia_semana(meses: int = MESES_TOP_PRODUCTOS_DEFAULT) -> list[dict]:
+def obtener_ventas_por_dia_semana(meses: int = MESES_TOP_PRODUCTOS_DEFAULT, moneda: MonedaReporte | None = None) -> list[dict]:
     """Qué día de la semana vende más, en promedio -- útil para planear turnos/promos."""
+    moneda = moneda or resolver_moneda_reporte(None)
     hoy = date.today()
     desde = _primer_dia_mes(hoy, meses - 1)
     filas = (
@@ -173,7 +178,7 @@ def obtener_ventas_por_dia_semana(meses: int = MESES_TOP_PRODUCTOS_DEFAULT) -> l
         .exclude(estado__iexact='cancelada')
         .annotate(dia_semana=ExtractWeekDay('fecha_operacion'))
         .values('dia_semana')
-        .annotate(total=Coalesce(Sum('total_base'), Decimal('0.0')), num_facturas=Count('id'))
+        .annotate(total=Coalesce(Sum(monto_documento(moneda)), Decimal('0.0')), num_facturas=Count('id'))
     )
     # ExtractWeekday: 1=domingo..7=sábado -- se remapea a índice 0=lunes..6=domingo.
     por_dia = {f['dia_semana']: f for f in filas}
@@ -183,18 +188,21 @@ def obtener_ventas_por_dia_semana(meses: int = MESES_TOP_PRODUCTOS_DEFAULT) -> l
         entrada = por_dia.get(dia_semana_django)
         resultado.append({
             'dia': NOMBRES_DIA_SEMANA[idx_lunes_domingo],
-            'total': float(entrada['total']) if entrada else 0.0,
+            'total': round(float(entrada['total']), 2) if entrada else 0.0,
             'num_facturas': entrada['num_facturas'] if entrada else 0,
         })
     return resultado
 
 
-def obtener_analitica_completa(meses: int = MESES_TENDENCIA_DEFAULT) -> dict:
-    tendencia = obtener_tendencia_mensual(meses)
+def obtener_analitica_completa(meses: int = MESES_TENDENCIA_DEFAULT, moneda: MonedaReporte | None = None) -> dict:
+    """Todos los bloques de analítica, con los montos en ``moneda`` (base por defecto)."""
+    moneda = moneda or resolver_moneda_reporte(None)
+    tendencia = obtener_tendencia_mensual(meses, moneda)
     return {
+        'moneda': moneda.as_dict(),
         'tendencia_mensual': tendencia,
-        'comparativa_mensual': obtener_comparativa_mensual(tendencia),
+        'comparativa_mensual': obtener_comparativa_mensual(tendencia, moneda),
         'proyeccion_proximo_mes': obtener_proyeccion_proximo_mes(tendencia),
-        'top_productos': obtener_top_productos_periodo(),
-        'ventas_por_dia_semana': obtener_ventas_por_dia_semana(),
+        'top_productos': obtener_top_productos_periodo(moneda=moneda),
+        'ventas_por_dia_semana': obtener_ventas_por_dia_semana(moneda=moneda),
     }

@@ -8,6 +8,7 @@ class DashboardResponseSerializer(serializers.Serializer):
     Serializer para validar la estructura de salida del Dashboard.
     Aunque el Dashboard es lectura, esto ayuda a documentar la API.
     """
+    moneda = serializers.DictField(help_text="Moneda de todos los montos: {codigo, simbolo, es_base, tasa_vigente}.")
     userInfo = serializers.DictField()
     resumen = serializers.DictField()
     graficoVentas = serializers.DictField()

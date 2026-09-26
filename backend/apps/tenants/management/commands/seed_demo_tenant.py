@@ -59,6 +59,14 @@ CLIENTES_DEMO = [
 
 DIAS_HISTORIAL = 30
 
+# Tasa Bs./USD del demo: arranca en TASA_DEMO_INICIAL y sube un poco cada día
+# (como en la vida real) para que el selector "$ / Bs." del panel muestre
+# conversiones con historia. El catálogo se precia en USD y el costo es un
+# porcentaje del precio, para que el "valor del inventario" no salga en 0.
+TASA_DEMO_INICIAL = Decimal("140.00")
+TASA_DEMO_ALZA_DIARIA = Decimal("0.35")
+MARGEN_COSTO_DEMO = Decimal("0.62")
+
 
 class Command(BaseCommand):
     help = "Crea (si no existe) y resetea con datos de ejemplo el tenant demo público de la landing."
@@ -100,7 +108,7 @@ class Command(BaseCommand):
         from apps.usuarios.models import Rol, UserMetadata
         from apps.clientes.models import Cliente
         from apps.inventario.models import Producto, Categoriaproducto, Almacen
-        from apps.configuracion.models import Moneda, Configuracioniva
+        from apps.configuracion.models import Moneda, TasaCambio, Configuracioniva
         from apps.facturacion.models import Factura, Detallefactura, MetodoPago
 
         with transaction.atomic():
@@ -127,6 +135,19 @@ class Command(BaseCommand):
 
             almacen, _ = Almacen.objects.get_or_create(nombre="Almacén Principal", defaults={"direccion": "Dirección por configurar"})
             moneda_base = Moneda.objects.filter(es_predeterminada=True).first()
+            usd, _ = Moneda.objects.get_or_create(
+                codigo="USD", defaults={"nombre": "Dólar estadounidense", "simbolo": "$", "es_predeterminada": False, "activa": True},
+            )
+            hoy = timezone.localdate()
+            tasa_por_dia = {
+                hoy - timedelta(days=d): TASA_DEMO_INICIAL + TASA_DEMO_ALZA_DIARIA * (DIAS_HISTORIAL - d)
+                for d in range(DIAS_HISTORIAL, -1, -1)
+            }
+            TasaCambio.objects.filter(moneda=usd).delete()
+            for fecha_tasa, valor in tasa_por_dia.items():
+                tasa_obj = TasaCambio.objects.create(moneda=usd, tasa=valor, fuente="Demo", activa=True)
+                # `fecha` es auto_now_add: se corrige después de crear.
+                TasaCambio.objects.filter(pk=tasa_obj.pk).update(fecha=fecha_tasa)
             iva_general = Configuracioniva.objects.filter(activo=True).order_by("porcentaje_iva").last()
             metodo_efectivo, _ = MetodoPago.objects.get_or_create(nombre="Efectivo", defaults={"tipo_metodo": "efectivo", "activo": True})
 
@@ -145,7 +166,8 @@ class Command(BaseCommand):
                     stock_minimo=info["stock_minimo"],
                     categoria=categorias[info["categoria"]],
                     almacen=almacen,
-                    moneda=moneda_base,
+                    moneda=usd,
+                    costo_promedio=(info["precio"] * MARGEN_COSTO_DEMO).quantize(Decimal("0.01")),
                     configuracion_iva=iva_general,
                     disponible_online=True,
                     tipo="simple",
@@ -177,7 +199,13 @@ class Command(BaseCommand):
                         continue
                     producto = productos[info["sku"]]
                     cliente = random.choice(clientes)
-                    precio = info["precio"]
+                    # ~1 de cada 3 ventas se cobra en bolívares (a la tasa
+                    # del día), el resto en dólares -- como un comercio real.
+                    tasa_dia = tasa_por_dia[fecha.date()] if fecha.date() in tasa_por_dia else TASA_DEMO_INICIAL
+                    en_bolivares = random.random() < 0.33
+                    moneda_factura = moneda_base if en_bolivares else usd
+                    tasa_factura = Decimal("1.000000") if en_bolivares else tasa_dia
+                    precio = (info["precio"] * tasa_dia).quantize(Decimal("0.01")) if en_bolivares else info["precio"]
                     subtotal = (precio * unidades).quantize(Decimal("0.01"))
                     iva_monto = (subtotal * iva_pct).quantize(Decimal("0.01"))
                     total = subtotal + iva_monto
@@ -188,16 +216,16 @@ class Command(BaseCommand):
                         condicion_pago="contado",
                         cliente=cliente,
                         fecha_operacion=fecha,
-                        moneda=moneda_base,
-                        tasa_cambio=Decimal("1.000000"),
+                        moneda=moneda_factura,
+                        tasa_cambio=tasa_factura,
                         subtotal=subtotal,
                         base_imponible=subtotal,
                         iva_total=iva_monto,
                         total=total,
-                        subtotal_base=subtotal,
-                        base_imponible_base=subtotal,
-                        iva_base=iva_monto,
-                        total_base=total,
+                        subtotal_base=(subtotal * tasa_factura).quantize(Decimal("0.01")),
+                        base_imponible_base=(subtotal * tasa_factura).quantize(Decimal("0.01")),
+                        iva_base=(iva_monto * tasa_factura).quantize(Decimal("0.01")),
+                        total_base=(total * tasa_factura).quantize(Decimal("0.01")),
                         almacen=almacen,
                         estado="pagado",
                         metodo_pago=metodo_efectivo,
