@@ -294,7 +294,7 @@ class MiClienteSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Client
-        fields = ('id', 'nombre_empresa', 'schema_name', 'pais_codigo', 'subscription')
+        fields = ('id', 'nombre_empresa', 'schema_name', 'pais_codigo', 'tipo_negocio', 'subscription')
 
 
 class PlatformPaymentInfoSerializer(serializers.ModelSerializer):

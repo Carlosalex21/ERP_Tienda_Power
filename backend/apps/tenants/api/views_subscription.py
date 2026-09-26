@@ -59,7 +59,7 @@ class PlanViewSet(viewsets.ModelViewSet):
             qs = self.queryset.filter(activo=True)
             tipo_negocio = self.request.query_params.get('tipo_negocio')
             if tipo_negocio:
-                qs = qs.filter(models.Q(tipos_negocio=[]) | models.Q(tipos_negocio__contains=[tipo_negocio]))
+                qs = qs.filter(Plan.filtro_para_tipo(tipo_negocio))
             return qs
         return self.queryset
 

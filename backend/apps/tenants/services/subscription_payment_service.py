@@ -95,6 +95,13 @@ def crear_pago_suscripcion(
     if not es_manual_esperado and metodo != 'stripe':
         raise PagoSuscripcionError("Este país paga la suscripción con tarjeta (Stripe).")
 
+    # El plan debe corresponder al módulo con el que se registró el negocio:
+    # un restaurante solo renueva planes de restaurante. Se valida aquí (y no
+    # solo filtrando la lista en el frontend) porque ambos flujos de pago --
+    # dueño en el dominio raíz y admin desde el panel -- pasan por esta función.
+    if not plan.aplica_a(client.tipo_negocio):
+        raise PagoSuscripcionError("Este plan no está disponible para el tipo de negocio de tu cuenta.")
+
     monto = calcular_monto_periodo(plan.precio, periodo)
 
     pago = SubscriptionPayment.objects.create(

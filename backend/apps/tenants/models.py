@@ -60,6 +60,15 @@ class Plan(models.Model):
     def __str__(self):
         return self.nombre
 
+    def aplica_a(self, tipo_negocio: str | None) -> bool:
+        """``True`` si el plan se le puede ofrecer/cobrar a un tenant de ``tipo_negocio``."""
+        return not self.tipos_negocio or tipo_negocio in self.tipos_negocio
+
+    @staticmethod
+    def filtro_para_tipo(tipo_negocio: str) -> models.Q:
+        """Mismo criterio que ``aplica_a``, como filtro de queryset."""
+        return models.Q(tipos_negocio=[]) | models.Q(tipos_negocio__contains=[tipo_negocio])
+
 class Client(TenantMixin):
     """
     Modelo principal que representa a un inquilino (tenant) en el sistema.
