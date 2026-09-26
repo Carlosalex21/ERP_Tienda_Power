@@ -8,6 +8,7 @@ from apps.facturacion.models import Factura
 
 # Importamos nuestro servicio core
 from apps.reportes.core.ventas_report_service import obtener_cierre_caja_service, obtener_reporte_ventas_service
+from apps.reportes.core.moneda_reporte import MONEDA_REFERENCIA, monto_documento, resolver_moneda_reporte
 
 # Importamos los serializers de tu código original
 from apps.reportes.api.serializers import FacturaReportSerializer, VentaReporteSerializer, FacturaReporteSerializer
@@ -52,11 +53,20 @@ class ReporteventaView(APIView):
         ]
     )
     def get(self, request):
-        queryset = Factura.objects.select_related('cliente', 'usuario').order_by('-fecha_operacion')
+        queryset = Factura.objects.select_related('cliente', 'usuario', 'moneda').order_by('-fecha_operacion')
         fecha_inicio = request.query_params.get('fecha_inicio')
         fecha_fin = request.query_params.get('fecha_fin')
         if fecha_inicio and fecha_fin:
-            queryset = queryset.filter(fecha_operacion__range=[fecha_inicio, fecha_fin])
+            # `__date__range`: con `__range` sobre el DateTime, "fin" se
+            # interpretaba como las 00:00 de ese día y el reporte dejaba
+            # fuera todas las ventas del último día.
+            queryset = queryset.filter(fecha_operacion__date__range=[fecha_inicio, fecha_fin])
+
+        # Mismo total expresado en la moneda de referencia (USD), con la tasa
+        # del día de cada factura -- para el selector "$ / Bs." del panel.
+        referencia = resolver_moneda_reporte(MONEDA_REFERENCIA)
+        if not referencia.es_base:
+            queryset = queryset.annotate(total_referencia=monto_documento(referencia))
         
         serializer = VentaReporteSerializer(queryset, many=True)
         return Response(serializer.data)

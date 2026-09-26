@@ -32,6 +32,9 @@ class VentaReporteSerializer(serializers.Serializer):
     # como si fueran la misma unidad.
     moneda_codigo = serializers.CharField(source='moneda.codigo', read_only=True, default=None)
     total_base = serializers.DecimalField(max_digits=14, decimal_places=2)
+    # En la moneda de referencia (USD) con la tasa del día de la factura; null
+    # si el tenant no tiene moneda de referencia con tasa.
+    total_referencia = serializers.DecimalField(max_digits=20, decimal_places=2, read_only=True, default=None)
     estado = serializers.CharField()
 
 class ReporteclienteSerializer(serializers.ModelSerializer):

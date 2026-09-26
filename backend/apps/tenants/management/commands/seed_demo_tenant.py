@@ -57,14 +57,14 @@ CLIENTES_DEMO = [
     {"nombre": "Comercial El Ahorro, C.A.", "telefono": "0212-1110005", "documento": "J-11100055"},
 ]
 
-DIAS_HISTORIAL = 30
+DIAS_HISTORIAL = 60
 
 # Tasa Bs./USD del demo: arranca en TASA_DEMO_INICIAL y sube un poco cada día
 # (como en la vida real) para que el selector "$ / Bs." del panel muestre
 # conversiones con historia. El catálogo se precia en USD y el costo es un
 # porcentaje del precio, para que el "valor del inventario" no salga en 0.
 TASA_DEMO_INICIAL = Decimal("140.00")
-TASA_DEMO_ALZA_DIARIA = Decimal("0.35")
+TASA_DEMO_ALZA_DIARIA = Decimal("0.20")
 MARGEN_COSTO_DEMO = Decimal("0.62")
 
 
