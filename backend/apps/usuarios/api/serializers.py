@@ -7,6 +7,11 @@ aprovecha la rotación con lista negra configurada en ``SIMPLE_JWT``.
 """
 from __future__ import annotations
 
+import hashlib
+import time
+
+from django.conf import settings
+from django.core.cache import cache
 from rest_framework import serializers
 from rest_framework_simplejwt.serializers import (
     TokenObtainPairSerializer,
@@ -16,6 +21,7 @@ from rest_framework_simplejwt.exceptions import InvalidToken
 from django.contrib.auth import authenticate
 from django.db import connection
 from django_tenants.utils import get_public_schema_name
+from apps.core.cache_utils import cache_key, get_cached, set_cached
 from ..models import Rol, UserMetadata
 
 
@@ -98,10 +104,75 @@ class MyTokenObtainPairSerializer(TokenObtainPairSerializer):
         return token
 
 
+def _refresh_grace_seconds() -> int:
+    return int(getattr(settings, "JWT_REFRESH_REUSE_GRACE_SECONDS", 30))
+
+
+def _refresh_grace_key(raw_refresh: str) -> str:
+    """Clave (aislada por tenant) del resultado de rotar ``raw_refresh``; se hashea para no guardar el token en claro."""
+    digest = hashlib.sha256(raw_refresh.encode()).hexdigest()
+    return cache_key("jwt_refresh_rotado", digest)
+
+
+def _tomar_turno_de_rotacion(grace_key: str, ttl: int) -> bool:
+    """
+    ``True`` si esta petición es la que debe rotar. Con Redis caído se
+    degrada a "sí" (mismo comportamiento que antes de la ventana de gracia).
+    """
+    try:
+        return bool(cache.add(f"{grace_key}:lock", 1, timeout=ttl))
+    except Exception:  # noqa: BLE001 - un caché caído no debe bloquear el refresh
+        return True
+
+
+def _esperar_rotacion_ajena(grace_key: str, max_espera: float = 3.0):
+    """Espera (poco) a que la petición que ganó el turno publique el par rotado."""
+    limite = time.monotonic() + max_espera
+    while time.monotonic() < limite:
+        previo = get_cached(grace_key)
+        if previo:
+            return previo
+        time.sleep(0.05)
+    return None
+
+
 class MyTokenRefreshSerializer(TokenRefreshSerializer):
-    """Rotación de refresh token propagando los claims personalizados."""
+    """
+    Rotación de refresh token propagando los claims personalizados.
+
+    Ventana de gracia ante refrescos concurrentes: con
+    ``ROTATE_REFRESH_TOKENS`` + ``BLACKLIST_AFTER_ROTATION`` el primer
+    refresh invalida el token viejo, así que si dos pestañas (o dos
+    peticiones de la misma pestaña) lo presentan casi a la vez, la segunda
+    recibía ``401 Token is blacklisted`` y el frontend cerraba la sesión --
+    el origen del "se queda pegado" con la misma cuenta abierta en varias
+    ventanas. Durante unos segundos tras la rotación, presentar el MISMO
+    token viejo devuelve el MISMO par nuevo ya emitido (no uno adicional),
+    así que no se amplía la superficie: solo quien ya poseía ese token exacto
+    obtiene lo que igual habría recibido la otra pestaña.
+    """
 
     def validate(self, attrs):
+        raw_refresh = attrs.get("refresh") or ""
+        grace = _refresh_grace_seconds()
+        grace_key = _refresh_grace_key(raw_refresh) if raw_refresh and grace > 0 else None
+        if grace_key:
+            previo = get_cached(grace_key)
+            if previo:
+                return previo
+            # Dos peticiones llegando en el mismo instante (workers
+            # distintos): solo una rota, la otra espera su resultado.
+            if not _tomar_turno_de_rotacion(grace_key, grace):
+                previo = _esperar_rotacion_ajena(grace_key)
+                if previo:
+                    return previo
+
+        data = self._rotar(attrs)
+        if grace_key:
+            set_cached(grace_key, data, ttl=grace)
+        return data
+
+    def _rotar(self, attrs):
         data = super().validate(attrs)
         # Si SimpleJWT ya rotó el token y devolvió un nuevo access/refresh,
         # replicamos los claims de usuario al nuevo access token.

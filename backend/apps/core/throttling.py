@@ -17,12 +17,30 @@ from __future__ import annotations
 
 import logging
 
+from django.db import connection
 from rest_framework.throttling import AnonRateThrottle, ScopedRateThrottle, UserRateThrottle
 
 logger = logging.getLogger(__name__)
 
 
 class _ResilientThrottleMixin:
+    """
+    Además de degradar ante un caché caído, aísla la clave por tenant.
+
+    DRF arma la clave con ``request.user.pk`` (o la IP), pero cada esquema
+    tiene su propia tabla de usuarios: el admin de CADA tenant suele ser el
+    ``pk=1``, así que sin el prefijo de esquema todos los tenants compartían
+    el mismo contador de ``UserRateThrottle`` -- un tenant con mucho tráfico
+    podía dejar a otro recibiendo 429 sin haber hecho nada.
+    """
+
+    def get_cache_key(self, request, view):
+        key = super().get_cache_key(request, view)
+        if key is None:
+            return None
+        schema = getattr(connection, "schema_name", None) or "public"
+        return f"{schema}:{key}"
+
     def allow_request(self, request, view):
         try:
             return super().allow_request(request, view)

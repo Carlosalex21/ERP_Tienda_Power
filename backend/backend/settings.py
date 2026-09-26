@@ -40,8 +40,8 @@ FRONTEND_BASE_DOMAIN = os.getenv('FRONTEND_BASE_DOMAIN', 'localhost:3000')
 FRONTEND_BASE_URL = os.getenv('FRONTEND_BASE_URL', 'http://localhost:3000')
 
 SIMPLE_JWT = {
-    "ACCESS_TOKEN_LIFETIME": timedelta(minutes=15),
-    "REFRESH_TOKEN_LIFETIME": timedelta(days=7),
+    "ACCESS_TOKEN_LIFETIME": timedelta(seconds=int(os.getenv("JWT_ACCESS_LIFETIME_SECONDS", str(15 * 60)))),
+    "REFRESH_TOKEN_LIFETIME": timedelta(days=int(os.getenv("JWT_REFRESH_LIFETIME_DAYS", "7"))),
     "ROTATE_REFRESH_TOKENS": True,
     "BLACKLIST_AFTER_ROTATION": True,
     "UPDATE_LAST_LOGIN": True,
@@ -275,6 +275,11 @@ SESSION_COOKIE_SECURE = os.getenv('SESSION_COOKIE_SECURE', 'False') == 'True'
 CSRF_COOKIE_SECURE = os.getenv('CSRF_COOKIE_SECURE', 'False') == 'True'
 SECURE_HSTS_SECONDS = int(os.getenv('SECURE_HSTS_SECONDS', '0'))
 SECURE_HSTS_INCLUDE_SUBDOMAINS = os.getenv('SECURE_HSTS_INCLUDE_SUBDOMAINS', 'False') == 'True'
+
+# Segundos durante los que un refresh token recién rotado sigue devolviendo
+# el MISMO par nuevo (pestañas/dispositivos refrescando a la vez -- ver
+# `apps.usuarios.api.serializers.MyTokenRefreshSerializer`). 0 lo desactiva.
+JWT_REFRESH_REUSE_GRACE_SECONDS = int(os.getenv('JWT_REFRESH_REUSE_GRACE_SECONDS', '30'))
 
 # Cookies de autenticación JWT
 JWT_ACCESS_COOKIE_NAME = os.getenv('JWT_ACCESS_COOKIE_NAME', 'access_token')
