@@ -17,16 +17,23 @@ from decimal import Decimal
 from django.db.models import Sum
 
 from apps.facturacion.models import Factura
+from apps.reportes.core.moneda_reporte import moneda_de_montos_comerciales, monto_documento
 
 from ..models import ClienteB2B
 
 
 def credito_usado(cliente_b2b: ClienteB2B) -> Decimal:
-    """Suma de `Factura.total` de pedidos del cliente aún no pagados."""
+    """
+    Total de los pedidos del cliente aún no pagados, en la misma moneda que
+    `limite_credito` (ver `moneda_de_montos_comerciales`). Antes sumaba
+    `Factura.total` crudo: un pedido en Bs. y otro en $ se sumaban como si
+    fueran la misma moneda.
+    """
+    moneda = moneda_de_montos_comerciales()
     total = Factura.objects.filter(cliente_b2b=cliente_b2b, estado="pendiente").aggregate(
-        suma=Sum("total")
+        suma=Sum(monto_documento(moneda))
     )["suma"]
-    return total or Decimal("0.00")
+    return Decimal(total or 0).quantize(Decimal("0.01"))
 
 
 def credito_disponible(cliente_b2b: ClienteB2B) -> Decimal | None:

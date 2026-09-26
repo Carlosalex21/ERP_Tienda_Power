@@ -20,6 +20,7 @@ from django.db.models import Sum
 from django.utils import timezone
 
 from apps.facturacion.models import Factura
+from apps.reportes.core.moneda_reporte import moneda_de_montos_comerciales, monto_documento
 
 from ..models import ClienteB2B, NivelPrecio
 
@@ -33,14 +34,18 @@ ESTADOS_QUE_CUENTAN = ("pendiente", "pagado")
 
 
 def total_comprado_periodo(cliente_b2b: ClienteB2B, meses: int = PERIODO_EVALUACION_MESES) -> Decimal:
-    """Suma de `Factura.total` del cliente en los últimos `meses` meses."""
+    """
+    Compras del cliente en los últimos `meses` meses, en la moneda de los
+    umbrales de `NivelPrecio` (ver `moneda_de_montos_comerciales`) y sin
+    mezclar facturas de monedas distintas.
+    """
     desde = timezone.now() - timedelta(days=30 * meses)
     total = Factura.objects.filter(
         cliente_b2b=cliente_b2b,
         estado__in=ESTADOS_QUE_CUENTAN,
         fecha_operacion__gte=desde,
-    ).aggregate(suma=Sum("total"))["suma"]
-    return total or Decimal("0.00")
+    ).aggregate(suma=Sum(monto_documento(moneda_de_montos_comerciales())))["suma"]
+    return Decimal(total or 0).quantize(Decimal("0.01"))
 
 
 def proximo_nivel(cliente_b2b: ClienteB2B) -> dict | None:

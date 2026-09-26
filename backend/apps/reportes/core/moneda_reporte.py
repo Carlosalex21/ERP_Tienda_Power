@@ -82,7 +82,12 @@ def resolver_moneda_reporte(valor: str | None) -> MonedaReporte:
     cargada, se cae a la base: mejor un reporte correcto en Bs. que uno
     "en dólares" con números inventados.
     """
-    base = get_moneda_base()
+    try:
+        base = get_moneda_base()
+    except MonedaNoEncontradaError:
+        # Tenant sin monedas configuradas: todo está en una sola moneda
+        # implícita y `total_base` == `total`.
+        return MonedaReporte(moneda_id=None, codigo="", simbolo="", es_base=True, tasa_vigente=Decimal("1"))
     valor = (valor or MONEDA_BASE).strip()
 
     if valor == MONEDA_BASE or valor.upper() == base.codigo:
@@ -153,3 +158,13 @@ def convertir_desde_base(monto_base: Decimal, moneda: MonedaReporte) -> Decimal:
     if moneda.es_base or not moneda.tasa_vigente:
         return Decimal(monto_base)
     return Decimal(monto_base) / moneda.tasa_vigente
+
+
+def moneda_de_montos_comerciales() -> MonedaReporte:
+    """
+    Moneda en la que se expresan los montos comerciales que el usuario
+    configura a mano (límite de crédito B2B, umbrales de nivel de precio):
+    la de referencia si existe (así se mostraron siempre, con "$"), si no la
+    base.
+    """
+    return resolver_moneda_reporte(MONEDA_REFERENCIA)

@@ -10,6 +10,7 @@ from ..models import ClienteB2B, NivelPrecio
 from ..services.pricing_service import calcular_precio_efectivo
 from ..services.b2b_order_service import crear_pedido_b2b, B2BOrderCreationError
 from ..api.views_b2b import B2BCatalogoView, B2BCrearPedidoView
+from apps.configuracion.models import Moneda
 
 User = get_user_model()
 
@@ -74,6 +75,9 @@ class B2BOrderServiceTests(TenantTestCase):
     """
 
     def setUp(self):
+        # Todo tenant real nace con su moneda base (ver el alta del tenant);
+        # sin ella el cálculo de totales del pedido no tiene en qué expresarse.
+        Moneda.objects.get_or_create(codigo='VES', defaults={'nombre': 'Bolívar', 'simbolo': 'Bs.', 'es_predeterminada': True})
         self.factory = APIRequestFactory()
         self.nivel = NivelPrecio.objects.create(nombre='Mayorista', porcentaje_descuento=Decimal('10.00'))
         self.user = User.objects.create_user(username='b2b-comprador', password='x')
