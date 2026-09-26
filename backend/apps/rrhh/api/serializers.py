@@ -3,7 +3,7 @@ from decimal import Decimal
 from rest_framework import serializers
 from apps.rrhh.models import (
     Horario, DiaFestivo, Asistencia, Sucursal, Departamento, PeriodoNomina, NominaEmpleado,
-    ConceptoNomina, NominaEmpleadoConcepto,
+    ConceptoNomina, NominaEmpleadoConcepto, ConfiguracionRRHH, VacacionTomada,
 )
 
 class SucursalSerializer(serializers.ModelSerializer):
@@ -79,6 +79,47 @@ class AgregarConceptoManualSerializer(serializers.Serializer):
     nombre = serializers.CharField(max_length=100)
     tipo = serializers.ChoiceField(choices=ConceptoNomina.TIPO_CHOICES)
     monto = serializers.DecimalField(max_digits=12, decimal_places=2, min_value=Decimal('0.01'))
+
+
+class ConfiguracionRRHHSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = ConfiguracionRRHH
+        fields = ('id', 'dias_vacaciones_por_anio', 'dias_prestaciones_por_anio', 'dias_periodo_sueldo_base')
+
+
+class VacacionTomadaSerializer(serializers.ModelSerializer):
+    registrado_por_username = serializers.CharField(source='registrado_por.username', read_only=True, default=None)
+
+    class Meta:
+        model = VacacionTomada
+        fields = ('id', 'usuario', 'fecha_inicio', 'fecha_fin', 'dias', 'observaciones', 'registrado_por_username', 'fecha_registro')
+        read_only_fields = ('usuario', 'dias', 'fecha_registro')
+
+
+class RegistrarVacacionSerializer(serializers.Serializer):
+    fecha_inicio = serializers.DateField()
+    fecha_fin = serializers.DateField()
+    observaciones = serializers.CharField(max_length=255, required=False, allow_blank=True, default='')
+
+
+class VacacionesResumenSerializer(serializers.Serializer):
+    """Respuesta de `apps.rrhh.services.calcular_vacaciones`, más la lista de períodos ya registrados."""
+    antiguedad_anios = serializers.DecimalField(max_digits=6, decimal_places=2)
+    dias_acumulados = serializers.IntegerField()
+    dias_tomados = serializers.IntegerField()
+    dias_disponibles = serializers.IntegerField()
+    tomadas = VacacionTomadaSerializer(many=True)
+
+
+class LiquidacionSerializer(serializers.Serializer):
+    """Respuesta de `apps.rrhh.services.calcular_liquidacion` -- una calculadora de referencia, no un pago real."""
+    antiguedad_anios = serializers.DecimalField(max_digits=6, decimal_places=2)
+    sueldo_diario = serializers.DecimalField(max_digits=12, decimal_places=2)
+    dias_vacaciones_pendientes = serializers.IntegerField()
+    monto_vacaciones_pendientes = serializers.DecimalField(max_digits=12, decimal_places=2)
+    dias_prestaciones_acumulados = serializers.IntegerField()
+    monto_prestaciones = serializers.DecimalField(max_digits=12, decimal_places=2)
+    total_liquidacion = serializers.DecimalField(max_digits=12, decimal_places=2)
 
 
 class HorarioSerializer(serializers.ModelSerializer):

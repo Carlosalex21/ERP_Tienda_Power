@@ -210,6 +210,60 @@ class ConceptoNomina(models.Model):
         return self.nombre
 
 
+class ConfiguracionRRHH(models.Model):
+    """
+    Parámetros de vacaciones/prestaciones que el tenant (o su contador)
+    configura UNA vez, según su país/régimen laboral -- igual que
+    `ConceptoNomina`, deliberadamente NO se hardcodea ninguna tasa legal
+    (varían por país y cambian con el tiempo). Fila única (pk=1), mismo
+    patrón que `Horario`.
+    """
+    dias_vacaciones_por_anio = models.PositiveIntegerField(
+        default=15,
+        help_text="Días de vacaciones que acumula un empleado por cada año completo de antigüedad.",
+    )
+    dias_prestaciones_por_anio = models.PositiveIntegerField(
+        default=15,
+        help_text="Días de sueldo que se acreditan como 'prestaciones sociales' (o equivalente) por cada año completo de antigüedad -- se usa solo como referencia al calcular una liquidación.",
+    )
+    dias_periodo_sueldo_base = models.PositiveIntegerField(
+        default=30,
+        help_text="A cuántos días representa el 'Sueldo Base' del empleado (ej. 30 si es mensual, 15 si es quincenal) -- de aquí se deriva el sueldo diario usado en vacaciones y liquidaciones.",
+    )
+
+    class Meta:
+        verbose_name = "Configuración de RRHH"
+        verbose_name_plural = "Configuración de RRHH"
+
+    def __str__(self) -> str:
+        return "Configuración de RRHH"
+
+
+class VacacionTomada(models.Model):
+    """
+    Un período de vacaciones ya disfrutado/registrado por un empleado --
+    resta de sus días acumulados (ver `apps.rrhh.services.calcular_vacaciones`)
+    y esos días quedan excluidos del descuento por ausencia al generar la
+    nómina (no son una falta, son vacaciones ya aprobadas).
+    """
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name='vacaciones_tomadas')
+    fecha_inicio = models.DateField()
+    fecha_fin = models.DateField()
+    dias = models.PositiveIntegerField(help_text="Días calendario del período (fecha_fin - fecha_inicio + 1).")
+    observaciones = models.CharField(max_length=255, blank=True, default='')
+    registrado_por = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    fecha_registro = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = 'VacacionTomada'
+        ordering = ['-fecha_inicio']
+        verbose_name = 'Vacación Tomada'
+        verbose_name_plural = 'Vacaciones Tomadas'
+
+    def __str__(self) -> str:
+        return f'{self.usuario} -- {self.fecha_inicio} a {self.fecha_fin}'
+
+
 class NominaEmpleadoConcepto(models.Model):
     """
     Snapshot de un `ConceptoNomina` ya aplicado a una línea de nómina -- si

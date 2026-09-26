@@ -3,20 +3,25 @@ from rest_framework.decorators import action
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import IsAuthenticated
+from django.contrib.auth.models import User
+from django.shortcuts import get_object_or_404
 from django.utils import timezone
 from datetime import date, datetime, timedelta
-from drf_spectacular.utils import extend_schema
+from drf_spectacular.utils import extend_schema, OpenApiParameter, OpenApiTypes
 from apps.core.permissions import IsTenantAdmin
 
-from apps.rrhh.models import Horario, DiaFestivo, Asistencia, Descanso, Sucursal, Departamento, PeriodoNomina, ConceptoNomina, NominaEmpleado
+from apps.rrhh.models import Horario, DiaFestivo, Asistencia, Descanso, Sucursal, Departamento, PeriodoNomina, ConceptoNomina, NominaEmpleado, ConfiguracionRRHH, VacacionTomada
 from apps.rrhh.api.serializers import (
     HorarioSerializer, DiaFestivoSerializer, AsistenciaSerializer, SucursalSerializer,
     AttendanceSummaryResponseSerializer, DepartamentoSerializer,
     PeriodoNominaSerializer, GenerarPeriodoNominaSerializer, ConceptoNominaSerializer,
     NominaEmpleadoSerializer, AgregarConceptoManualSerializer,
+    ConfiguracionRRHHSerializer, VacacionTomadaSerializer, RegistrarVacacionSerializer,
+    VacacionesResumenSerializer, LiquidacionSerializer,
 )
 from apps.rrhh.services import (
-    generar_periodo_nomina, pagar_periodo_nomina, agregar_concepto_manual, quitar_concepto_manual, NominaError,
+    generar_periodo_nomina, pagar_periodo_nomina, agregar_concepto_manual, quitar_concepto_manual,
+    calcular_vacaciones, registrar_vacacion_tomada, eliminar_vacacion_tomada, calcular_liquidacion, NominaError,
 )
 
 def get_working_days(year, month):
@@ -135,6 +140,87 @@ class NominaEmpleadoViewSet(viewsets.GenericViewSet):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         nomina_empleado.refresh_from_db()
         return Response(self.get_serializer(nomina_empleado).data)
+
+
+class ConfiguracionRRHHView(APIView):
+    """Parámetros de vacaciones/prestaciones del tenant (ver `ConfiguracionRRHH`) -- mismo patrón que `HorarioDetailView`."""
+    permission_classes = [IsTenantAdmin]
+    serializer_class = ConfiguracionRRHHSerializer
+
+    def get(self, request):
+        config, _ = ConfiguracionRRHH.objects.get_or_create(pk=1)
+        return Response(self.serializer_class(config).data)
+
+    def put(self, request):
+        config, _ = ConfiguracionRRHH.objects.update_or_create(pk=1, defaults=request.data)
+        return Response(self.serializer_class(config).data)
+
+
+class VacacionesEmpleadoView(APIView):
+    """
+    Resumen de vacaciones (acumuladas/tomadas/disponibles) de UN empleado y
+    registro de nuevos períodos tomados -- ver
+    `apps.rrhh.services.calcular_vacaciones`/`registrar_vacacion_tomada`.
+    """
+    permission_classes = [IsTenantAdmin]
+
+    def get(self, request, usuario_id):
+        empleado = get_object_or_404(User, pk=usuario_id)
+        resumen = calcular_vacaciones(empleado)
+        tomadas = VacacionTomada.objects.filter(usuario=empleado).order_by('-fecha_inicio')
+        data = {**resumen, 'tomadas': tomadas}
+        return Response(VacacionesResumenSerializer(data).data)
+
+    def post(self, request, usuario_id):
+        empleado = get_object_or_404(User, pk=usuario_id)
+        serializer = RegistrarVacacionSerializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        try:
+            registrar_vacacion_tomada(empleado, registrado_por=request.user, **serializer.validated_data)
+        except NominaError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        resumen = calcular_vacaciones(empleado)
+        tomadas = VacacionTomada.objects.filter(usuario=empleado).order_by('-fecha_inicio')
+        return Response(VacacionesResumenSerializer({**resumen, 'tomadas': tomadas}).data, status=status.HTTP_201_CREATED)
+
+
+class VacacionTomadaDetailView(APIView):
+    """Elimina un período de vacaciones registrado por error."""
+    permission_classes = [IsTenantAdmin]
+
+    def delete(self, request, vacacion_id):
+        vacacion = get_object_or_404(VacacionTomada, pk=vacacion_id)
+        eliminar_vacacion_tomada(vacacion)
+        return Response(status=status.HTTP_204_NO_CONTENT)
+
+
+class LiquidacionCalculadoraView(APIView):
+    """
+    Calculadora de referencia de la liquidación de un empleado (vacaciones
+    pendientes + prestaciones acumuladas según `ConfiguracionRRHH`) -- no
+    paga ni registra nada, ver `apps.rrhh.services.calcular_liquidacion`.
+    """
+    permission_classes = [IsTenantAdmin]
+
+    @extend_schema(
+        summary="Calcular la liquidación de referencia de un empleado a una fecha de egreso",
+        parameters=[OpenApiParameter(name='fecha_egreso', type=OpenApiTypes.DATE, required=True, location=OpenApiParameter.QUERY)],
+        responses=LiquidacionSerializer,
+    )
+    def get(self, request, usuario_id):
+        empleado = get_object_or_404(User, pk=usuario_id)
+        fecha_egreso_str = request.query_params.get('fecha_egreso')
+        if not fecha_egreso_str:
+            return Response({"error": "Falta el parámetro 'fecha_egreso'."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            fecha_egreso = date.fromisoformat(fecha_egreso_str)
+        except ValueError:
+            return Response({"error": "Formato de fecha inválido (usa AAAA-MM-DD)."}, status=status.HTTP_400_BAD_REQUEST)
+        try:
+            resultado = calcular_liquidacion(empleado, fecha_egreso)
+        except NominaError as exc:
+            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response(LiquidacionSerializer(resultado).data)
 
 
 class HorarioDetailView(APIView):

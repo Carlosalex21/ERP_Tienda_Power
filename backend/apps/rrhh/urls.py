@@ -4,7 +4,8 @@ from .api.views import (
     AttendanceSummaryView, ClockInView, ClockOutView, BreakView,
     HorarioDetailView, DiaFestivoListView, DiaFestivoDetailView,
     SucursalViewSet, DepartamentoViewSet, PeriodoNominaViewSet, ConceptoNominaViewSet,
-    NominaEmpleadoViewSet,
+    NominaEmpleadoViewSet, ConfiguracionRRHHView, VacacionesEmpleadoView, VacacionTomadaDetailView,
+    LiquidacionCalculadoraView,
 )
 from .api.views_impresion import ReciboNominaImprimirView
 
@@ -24,5 +25,9 @@ urlpatterns = [
     path('dias-festivos/', DiaFestivoListView.as_view(), name='dias-festivos-list'),
     path('dias-festivos/<int:pk>/', DiaFestivoDetailView.as_view(), name='dias-festivos-detail'),
     path('recibo-nomina/<int:nomina_empleado_id>/', ReciboNominaImprimirView.as_view(), name='recibo-nomina-imprimir'),
+    path('configuracion-rrhh/', ConfiguracionRRHHView.as_view(), name='configuracion-rrhh'),
+    path('vacaciones/<int:usuario_id>/', VacacionesEmpleadoView.as_view(), name='vacaciones-empleado'),
+    path('vacaciones-tomadas/<int:vacacion_id>/', VacacionTomadaDetailView.as_view(), name='vacacion-tomada-detail'),
+    path('liquidacion/<int:usuario_id>/', LiquidacionCalculadoraView.as_view(), name='liquidacion-calculadora'),
     path('', include(router.urls)),
 ]

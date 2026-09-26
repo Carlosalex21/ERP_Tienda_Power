@@ -1,12 +1,15 @@
 """Servicios de negocio de RRHH: generación y pago de nómina."""
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 
 from django.contrib.auth.models import User
 from django.db import transaction
 from django.utils import timezone
 
-from .models import Asistencia, ConceptoNomina, Horario, NominaEmpleado, NominaEmpleadoConcepto, PeriodoNomina
+from .models import (
+    Asistencia, ConceptoNomina, ConfiguracionRRHH, Horario, NominaEmpleado, NominaEmpleadoConcepto,
+    PeriodoNomina, VacacionTomada,
+)
 
 CENT = Decimal('0.01')
 
@@ -25,6 +28,24 @@ def _round(value) -> Decimal:
 
 class NominaError(Exception):
     """Error controlado al generar/pagar una nómina."""
+
+
+def _dias_vacacion_en_rango(empleado, fecha_desde, fecha_hasta) -> list[date]:
+    """
+    Días calendario (dentro de [fecha_desde, fecha_hasta]) cubiertos por
+    alguna `VacacionTomada` del empleado -- se usan para no descontarle esos
+    días como ausencia al generar la nómina (ya están aprobados como
+    vacaciones, no son una falta).
+    """
+    dias: list[date] = []
+    tomadas = VacacionTomada.objects.filter(
+        usuario=empleado, fecha_inicio__lte=fecha_hasta, fecha_fin__gte=fecha_desde,
+    )
+    for vacacion in tomadas:
+        inicio = max(vacacion.fecha_inicio, fecha_desde)
+        fin = min(vacacion.fecha_fin, fecha_hasta)
+        dias.extend(date.fromordinal(o) for o in range(inicio.toordinal(), fin.toordinal() + 1))
+    return dias
 
 
 def _calcular_horas_extra(empleado, fecha_desde, fecha_hasta) -> Decimal:
@@ -117,7 +138,7 @@ def generar_periodo_nomina(*, fecha_desde, fecha_hasta, usuario) -> PeriodoNomin
         sueldo_base = empleado.metadata.sueldo_base
         dias_ausencia = Asistencia.objects.filter(
             usuario=empleado, fecha__range=[fecha_desde, fecha_hasta], estado='Ausente',
-        ).count()
+        ).exclude(fecha__in=_dias_vacacion_en_rango(empleado, fecha_desde, fecha_hasta)).count()
         valor_dia = sueldo_base / Decimal(dias_periodo) if dias_periodo else Decimal('0')
         deduccion_ausencias = _round(valor_dia * dias_ausencia)
 
@@ -213,3 +234,112 @@ def pagar_periodo_nomina(periodo: PeriodoNomina, usuario) -> PeriodoNomina:
         pass
 
     return periodo
+
+
+# --- Vacaciones y liquidación ---------------------------------------------
+# Deliberadamente sin tasas legales hardcodeadas (ver `ConfiguracionRRHH`):
+# el sistema calcula sobre los parámetros (días/año, días que representa el
+# sueldo base) que el propio tenant o su contador configuran una vez.
+
+def obtener_configuracion_rrhh() -> ConfiguracionRRHH:
+    config, _ = ConfiguracionRRHH.objects.get_or_create(pk=1)
+    return config
+
+
+def calcular_antiguedad_anios(fecha_contratacion, hasta=None) -> Decimal:
+    """Años completos (con decimales) entre `fecha_contratacion` y `hasta` (hoy si no se indica)."""
+    hasta = hasta or timezone.localdate()
+    dias = (hasta - fecha_contratacion).days
+    if dias <= 0:
+        return Decimal('0')
+    return (Decimal(dias) / Decimal('365.25')).quantize(Decimal('0.01'))
+
+
+def calcular_vacaciones(empleado) -> dict:
+    """
+    Días de vacaciones acumulados por antigüedad, cuántos ya se registraron
+    como tomados (ver `VacacionTomada`) y el saldo disponible. Sin
+    `fecha_contratacion` cargada no hay antigüedad que calcular -- devuelve
+    todo en 0 en vez de asumir una fecha de ingreso.
+    """
+    config = obtener_configuracion_rrhh()
+    metadata = empleado.metadata
+    if not metadata.fecha_contratacion:
+        return {
+            'antiguedad_anios': Decimal('0'), 'dias_acumulados': 0,
+            'dias_tomados': 0, 'dias_disponibles': 0,
+        }
+
+    antiguedad_anios = calcular_antiguedad_anios(metadata.fecha_contratacion)
+    dias_acumulados = int(antiguedad_anios * config.dias_vacaciones_por_anio)
+    dias_tomados = sum(
+        (v.dias for v in VacacionTomada.objects.filter(usuario=empleado)), 0,
+    )
+    return {
+        'antiguedad_anios': antiguedad_anios,
+        'dias_acumulados': dias_acumulados,
+        'dias_tomados': dias_tomados,
+        'dias_disponibles': dias_acumulados - dias_tomados,
+    }
+
+
+@transaction.atomic
+def registrar_vacacion_tomada(
+    empleado, *, fecha_inicio, fecha_fin, observaciones: str = '', registrado_por=None,
+) -> VacacionTomada:
+    """
+    Registra un período de vacaciones ya tomado -- no bloquea si deja el
+    saldo en negativo (puede haber acuerdos particulares con el empleado);
+    el saldo negativo queda visible en `calcular_vacaciones` para que el
+    admin lo vea, no lo impide.
+    """
+    if fecha_inicio > fecha_fin:
+        raise NominaError('La fecha de inicio no puede ser posterior a la fecha de fin.')
+    dias = (fecha_fin - fecha_inicio).days + 1
+    return VacacionTomada.objects.create(
+        usuario=empleado, fecha_inicio=fecha_inicio, fecha_fin=fecha_fin,
+        dias=dias, observaciones=observaciones, registrado_por=registrado_por,
+    )
+
+
+def eliminar_vacacion_tomada(vacacion: VacacionTomada) -> None:
+    vacacion.delete()
+
+
+def calcular_liquidacion(empleado, fecha_egreso) -> dict:
+    """
+    Calculadora de referencia para la liquidación de un empleado al terminar
+    la relación laboral -- NO crea ningún registro ni paga nada, es solo un
+    desglose para que el admin/contador lo revise (y ajuste según su
+    legislación específica) antes de procesar el pago real por fuera del
+    sistema o como un concepto manual en la próxima nómina.
+    """
+    metadata = empleado.metadata
+    if not metadata.fecha_contratacion:
+        raise NominaError('El empleado no tiene fecha de contratación registrada -- no se puede calcular su antigüedad.')
+    if not metadata.sueldo_base:
+        raise NominaError('El empleado no tiene un sueldo base asignado.')
+    if fecha_egreso < metadata.fecha_contratacion:
+        raise NominaError('La fecha de egreso no puede ser anterior a la fecha de contratación.')
+
+    config = obtener_configuracion_rrhh()
+    sueldo_diario = _round(metadata.sueldo_base / Decimal(config.dias_periodo_sueldo_base))
+    antiguedad_anios = calcular_antiguedad_anios(metadata.fecha_contratacion, hasta=fecha_egreso)
+
+    vacaciones = calcular_vacaciones(empleado)
+    dias_vacaciones_pendientes = max(vacaciones['dias_disponibles'], 0)
+    monto_vacaciones = _round(sueldo_diario * dias_vacaciones_pendientes)
+
+    dias_prestaciones = int(antiguedad_anios * config.dias_prestaciones_por_anio)
+    monto_prestaciones = _round(sueldo_diario * dias_prestaciones)
+
+    total = _round(monto_vacaciones + monto_prestaciones)
+    return {
+        'antiguedad_anios': antiguedad_anios,
+        'sueldo_diario': sueldo_diario,
+        'dias_vacaciones_pendientes': dias_vacaciones_pendientes,
+        'monto_vacaciones_pendientes': monto_vacaciones,
+        'dias_prestaciones_acumulados': dias_prestaciones,
+        'monto_prestaciones': monto_prestaciones,
+        'total_liquidacion': total,
+    }
