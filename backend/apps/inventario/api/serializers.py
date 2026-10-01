@@ -50,6 +50,18 @@ class VariacionproductoSerializer(serializers.ModelSerializer):
             return round(obj.precio / (1 + (tasa / 100)), 2)
         return obj.precio
 
+    def update(self, instance, validated_data):
+        # `cantidad`/`costo_promedio` solo se escriben aquí AL CREAR la
+        # variante (sin stock previo, un set directo ya ES el promedio
+        # ponderado correcto). Una vez creada, editarlos por este endpoint
+        # dejaría cambiar el stock sin pasar por un Ajuste (sin kardex) y
+        # pisaría el costo promedio sin la fórmula ponderada de
+        # `stock_service._actualizar_costo_promedio` -- esos cambios deben
+        # venir siempre de un Ajuste de Inventario.
+        validated_data.pop('cantidad', None)
+        validated_data.pop('costo_promedio', None)
+        return super().update(instance, validated_data)
+
 class PresentacionProductoSerializer(serializers.ModelSerializer):
     class Meta:
         model = PresentacionProducto
@@ -86,6 +98,18 @@ class ProductoSerializer(serializers.ModelSerializer):
             except MonedaNoEncontradaError:
                 pass
         return super().create(validated_data)
+
+    def update(self, instance, validated_data):
+        # Mismo motivo que en `VariacionproductoSerializer.update()`: editar
+        # un producto YA EXISTENTE no debe poder cambiar su stock (sin
+        # kardex) ni su costo promedio (sin la fórmula ponderada) -- eso es
+        # lo que hace `apps.inventario.services.stock_service` desde un
+        # Ajuste de Inventario (entrada/salida) o la recepción de una orden
+        # de compra. `cantidad`/`costo_promedio` solo se aceptan al CREAR
+        # (stock inicial del producto, sin stock previo que promediar).
+        validated_data.pop('cantidad', None)
+        validated_data.pop('costo_promedio', None)
+        return super().update(instance, validated_data)
 
 class InventarioSerializer(serializers.ModelSerializer):
     """Desglose de stock por almacén -- ver `apps.inventario.services.stock_service.crear_y_aplicar_traslado`, que es lo único que hoy mantiene `cantidad` al día junto con los Ajustes."""

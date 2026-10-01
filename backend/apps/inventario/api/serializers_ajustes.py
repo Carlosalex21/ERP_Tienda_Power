@@ -70,6 +70,24 @@ class AjusteInventarioSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("El ajuste debe incluir al menos una línea de producto.")
         return value
 
+    def validate(self, attrs):
+        # Una ENTRADA sin costo deja el costo promedio del producto sin
+        # actualizar (ver `stock_service._actualizar_costo_promedio`) --
+        # silenciosamente, sin que nadie lo note hasta que el valor de
+        # inventario del dashboard salga mal. Se exige acá, al momento de
+        # cargar la mercancía, en vez de dejarlo "opcional" y confiar en que
+        # alguien lo complete después.
+        if attrs.get('tipo') == 'entrada':
+            sin_costo = [
+                d for d in attrs.get('detalles', [])
+                if not d.get('costo_unitario') or d['costo_unitario'] <= 0
+            ]
+            if sin_costo:
+                raise serializers.ValidationError({
+                    'detalles': 'Toda línea de una entrada debe traer el costo unitario de compra (mayor a 0).',
+                })
+        return attrs
+
     def create(self, validated_data):
         detalles_data = validated_data.pop('detalles', [])
         usuario = self.context['request'].user

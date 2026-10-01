@@ -417,7 +417,12 @@ class AjusteInventarioDetalle(models.Model):
     # perder plata por redondeo en compras de gran volumen.
     costo_unitario = models.DecimalField(
         max_digits=14, decimal_places=6, blank=True, null=True,
-        help_text="Costo unitario reportado en la nota de entrega/factura del proveedor (opcional).",
+        help_text=(
+            "Costo unitario reportado en la nota de entrega/factura del proveedor. "
+            "Nulo solo tiene sentido en una SALIDA (no se usa); en una ENTRADA, "
+            "`AjusteInventarioSerializer.validate()` lo exige para no dejar el "
+            "costo promedio del producto sin actualizar."
+        ),
     )
     # Snapshot del stock del item justo después de aplicar esta línea -- queda
     # fijo aunque el stock siga moviéndose después (kardex, no cálculo en vivo).

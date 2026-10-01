@@ -154,8 +154,8 @@ class ProductoBulkUploadView(APIView):
 
 
 PLANTILLA_PRODUCTOS_CSV = (
-    "nombre,precio,codigo_barras,sku,stock_inicial,categoria,iva,descripcion\r\n"
-    "Botella de agua 500ml,67.00,7591234567890,AGUA-500,100,Bebidas,IVA General,Agua mineral sin gas\r\n"
+    "nombre,precio,costo,codigo_barras,sku,stock_inicial,categoria,iva,descripcion\r\n"
+    "Botella de agua 500ml,67.00,45.00,7591234567890,AGUA-500,100,Bebidas,IVA General,Agua mineral sin gas\r\n"
 )
 
 

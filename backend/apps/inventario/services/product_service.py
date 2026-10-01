@@ -68,9 +68,14 @@ def procesar_carga_masiva_productos(file_content: bytes, file_name: str) -> dict
 
     Columnas reconocidas: `nombre` y `precio` (obligatorias -- `precio` es
     el precio final YA CON IVA incluido, la misma convención que usa todo
-    el sistema); `codigo_barras`, `sku`, `stock_inicial`, `descripcion`,
-    `categoria` (se crea si no existe) e `iva` (nombre de una configuración
-    de IVA ya existente) son opcionales.
+    el sistema); `codigo_barras`, `sku`, `stock_inicial`, `costo` (costo de
+    compra unitario -- también acepta `costo_promedio`/`costo_compra` como
+    nombre de columna), `descripcion`, `categoria` (se crea si no existe) e
+    `iva` (nombre de una configuración de IVA ya existente) son opcionales.
+    `stock_inicial`/`costo` solo se aplican al CREAR un producto nuevo --
+    volver a subir el archivo para actualizar uno ya existente (emparejado
+    por código de barras/SKU) no toca su stock ni su costo promedio, que
+    desde ahí en adelante solo cambian vía Ajustes de Inventario.
 
     El emparejamiento para actualizar en vez de duplicar usa, en orden,
     `codigo_barras` o `sku` -- si la fila no trae ninguno de los dos (un
@@ -135,11 +140,16 @@ def procesar_carga_masiva_productos(file_content: bytes, file_name: str) -> dict
         codigo_barras = _texto(row.get('codigo_barras')) or None
         sku = _texto(row.get('sku')) or None
         cantidad = _num(row.get('stock_inicial'), default=Decimal('0')) or Decimal('0')
+        costo_promedio = _num(row.get('costo')) or _num(row.get('costo_promedio')) or _num(row.get('costo_compra'))
 
+        # `cantidad`/`costo_promedio` solo se aplican al CREAR un producto
+        # nuevo -- igual que en `ProductoSerializer.update()`, re-subir el
+        # mismo archivo para actualizar precios/categoría de productos que
+        # YA EXISTEN (emparejados por código de barras/SKU) no debe pisar su
+        # stock ni su costo promedio por fuera de un Ajuste de Inventario.
         producto_data = {
             'nombre': nombre,
             'precio': precio,
-            'cantidad': int(cantidad),
             'descripcion': _texto(row.get('descripcion')),
             'sku': sku,
         }
@@ -173,12 +183,22 @@ def procesar_carga_masiva_productos(file_content: bytes, file_name: str) -> dict
 
         try:
             with transaction.atomic():
+                existente = None
                 if codigo_barras:
-                    producto, created = Producto.objects.update_or_create(codigo_barras=codigo_barras, defaults=producto_data)
+                    existente = Producto.objects.filter(codigo_barras=codigo_barras).first()
                 elif sku:
-                    producto, created = Producto.objects.update_or_create(sku=sku, defaults=producto_data)
+                    existente = Producto.objects.filter(sku=sku).first()
+
+                if existente is not None:
+                    for campo, valor in producto_data.items():
+                        setattr(existente, campo, valor)
+                    existente.save(update_fields=list(producto_data.keys()))
+                    producto, created = existente, False
                 else:
-                    producto = Producto.objects.create(**producto_data)
+                    producto = Producto.objects.create(
+                        **producto_data, cantidad=int(cantidad),
+                        **({'costo_promedio': costo_promedio} if costo_promedio is not None else {}),
+                    )
                     created = True
             if created:
                 productos_creados += 1
