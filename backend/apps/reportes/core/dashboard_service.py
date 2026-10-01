@@ -24,7 +24,7 @@ DIAS_VENTANA_VELOCIDAD = 30
 DIAS_UMBRAL_ALERTA_QUIEBRE = 7
 
 
-def obtener_prediccion_quiebre_stock():
+def obtener_prediccion_quiebre_stock(almacen_ids=None):
     """
     A diferencia de "Alertas de Stock Bajo" (umbral estático sobre la
     cantidad actual), esto proyecta CUÁNTOS DÍAS le quedan a cada producto
@@ -32,6 +32,8 @@ def obtener_prediccion_quiebre_stock():
     producto con harto stock pero que se vende rápido puede quebrar antes
     que uno con poco stock pero que casi no rota, y el umbral estático no
     distingue esos dos casos.
+
+    `almacen_ids`: limita a los productos de esas sucursales/almacenes.
     """
     hoy = date.today()
     desde = hoy - timedelta(days=DIAS_VENTANA_VELOCIDAD - 1)
@@ -54,6 +56,8 @@ def obtener_prediccion_quiebre_stock():
     productos_simples = Producto.objects.filter(
         activo=True, tipo='simple', cantidad__gt=0,
     ).only('id', 'nombre', 'sku', 'cantidad')
+    if almacen_ids:
+        productos_simples = productos_simples.filter(almacen_id__in=almacen_ids)
     for producto in productos_simples:
         vendido = ventas_por_producto.get(producto.id, 0)
         _agregar_si_en_riesgo(alertas, producto.nombre, producto.sku, producto.cantidad, vendido)
@@ -68,6 +72,8 @@ def obtener_prediccion_quiebre_stock():
     variantes = Variacionproducto.objects.filter(
         activo=True, producto__activo=True, cantidad__gt=0,
     ).select_related('producto').only('id', 'nombre', 'sku', 'cantidad', 'producto__nombre')
+    if almacen_ids:
+        variantes = variantes.filter(producto__almacen_id__in=almacen_ids)
     for variante in variantes:
         vendido = ventas_por_variante.get(variante.id, 0)
         nombre_completo = f"{variante.producto.nombre} - {variante.nombre}" if variante.producto else variante.nombre
@@ -92,13 +98,19 @@ def _agregar_si_en_riesgo(alertas, nombre, sku, cantidad_actual, unidades_vendid
         'dias_restantes': round(dias_restantes, 1),
     })
 
-def obtener_metricas_dashboard(start_date_str, end_date_str, user, moneda: MonedaReporte | None = None):
+def obtener_metricas_dashboard(start_date_str, end_date_str, user, moneda: MonedaReporte | None = None, almacen_ids=None):
     """
     Calcula todas las métricas para el panel principal:
     Resumen, Gráficos, Top Productos y Bajo Stock.
 
     Todos los montos salen en ``moneda`` (base por defecto) -- ver
     ``apps.reportes.core.moneda_reporte`` para el criterio de conversión.
+
+    `almacen_ids`: lista de ids de `Almacen` -- hoy la unidad de "sucursal"
+    real del sistema (ver `Factura.almacen`/`Producto.almacen`; el modelo
+    `rrhh.Sucursal` es solo para la ficha del empleado, no tiene stock ni
+    ventas asociadas). `None`/vacío = sin filtrar, tenant completo (mismo
+    comportamiento de siempre para un tenant de una sola sucursal).
     """
     moneda = moneda or resolver_moneda_reporte(None)
     monto = monto_documento(moneda)
@@ -111,6 +123,8 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user, moneda: Moned
     end_date = date.fromisoformat(end_date_str) if end_date_str else hoy
 
     base_queryset = Factura.objects.filter(fecha_operacion__date__range=[start_date, end_date])
+    if almacen_ids:
+        base_queryset = base_queryset.filter(almacen_id__in=almacen_ids)
     ventas_queryset = base_queryset.exclude(estado__iexact='cancelada')
 
     # 2. Tarjetas de Resumen
@@ -132,9 +146,12 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user, moneda: Moned
     periodo_dias = (end_date - start_date).days + 1
     prev_end = start_date - timedelta(days=1)
     prev_start = prev_end - timedelta(days=periodo_dias - 1)
-    total_vendido_anterior = Factura.objects.filter(
+    total_vendido_anterior_qs = Factura.objects.filter(
         fecha_operacion__date__range=[prev_start, prev_end],
-    ).exclude(estado__iexact='cancelada').aggregate(
+    ).exclude(estado__iexact='cancelada')
+    if almacen_ids:
+        total_vendido_anterior_qs = total_vendido_anterior_qs.filter(almacen_id__in=almacen_ids)
+    total_vendido_anterior = total_vendido_anterior_qs.aggregate(
         total=Coalesce(Sum(monto), Decimal('0.0')),
     )['total']
 
@@ -192,7 +209,10 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user, moneda: Moned
     UMBRAL_BAJO_STOCK_GENERAL = 10
     # `tipo='servicio'` no tiene stock real (siempre cantidad=0/None) -- sin
     # excluirlo, CADA servicio aparecía como "bajo stock" en el dashboard.
-    bajo_stock_qs = Producto.objects.filter(activo=True).exclude(tipo='servicio').filter(
+    bajo_stock_qs = Producto.objects.filter(activo=True).exclude(tipo='servicio')
+    if almacen_ids:
+        bajo_stock_qs = bajo_stock_qs.filter(almacen_id__in=almacen_ids)
+    bajo_stock_qs = bajo_stock_qs.filter(
         Q(stock_minimo__isnull=False, cantidad__lt=F('stock_minimo')) |
         Q(stock_minimo__isnull=True, cantidad__lt=UMBRAL_BAJO_STOCK_GENERAL)
     ).order_by('cantidad')
@@ -209,7 +229,11 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user, moneda: Moned
     # real. Para productos de tipo 'variable' el costo/cantidad reales viven
     # en cada variante, no en el producto padre -- se suman ambas fuentes
     # para no subestimar el valor de un catálogo con productos variables.
-    valor_inventario = _redondear(convertir_desde_base(_valor_inventario_en_base(), moneda))
+    valor_inventario = _redondear(convertir_desde_base(_valor_inventario_en_base(almacen_ids), moneda))
+
+    productos_qs = Producto.objects.filter(activo=True)
+    if almacen_ids:
+        productos_qs = productos_qs.filter(almacen_id__in=almacen_ids)
 
     return {
         'moneda': moneda.as_dict(),
@@ -218,10 +242,12 @@ def obtener_metricas_dashboard(start_date_str, end_date_str, user, moneda: Moned
         'graficoVentas': grafico_ventas,
         'productosMasVendidos': productos_mas_vendidos,
         'productosBajoStock': bajo_stock,
-        'prediccionQuiebreStock': obtener_prediccion_quiebre_stock(),
+        'prediccionQuiebreStock': obtener_prediccion_quiebre_stock(almacen_ids),
         'infoGeneral': {
+            # Clientes no tiene sucursal asociada en el modelo actual -- sale
+            # completo sin importar el filtro (ver docstring de la función).
             'clientes': Cliente.objects.filter(activo=True).count(),
-            'productos': Producto.objects.filter(activo=True).count(),
+            'productos': productos_qs.count(),
             'ordenes_periodo': ventas_queryset.count(),
             'valor_inventario': valor_inventario,
             'productos_bajo_stock_count': bajo_stock_total,
@@ -232,27 +258,28 @@ def _redondear(valor) -> Decimal:
     return Decimal(valor or 0).quantize(Decimal('0.01'))
 
 
-def _valor_inventario_en_base() -> Decimal:
+def _valor_inventario_en_base(almacen_ids=None) -> Decimal:
     """
     Costo (``costo_promedio``) x cantidad de todo el stock, en moneda base.
 
     El costo está en la moneda del producto (``Producto.moneda``; vacío =
     base), así que se agrupa por moneda y se convierte cada grupo a la tasa
     vigente -- antes se sumaban costos en $ y en Bs. como si fueran lo mismo.
+
+    `almacen_ids`: limita a los productos de esas sucursales/almacenes.
     """
     from apps.configuracion.services.conversion_service import get_moneda_base, get_tasa_vigente
     from apps.configuracion.models import Moneda
 
     valor_expr = Sum(F('costo_promedio') * F('cantidad'), output_field=DecimalField())
     por_moneda: dict[int | None, Decimal] = {}
-    simples = (
-        Producto.objects.filter(activo=True).exclude(tipo='variable')
-        .values('moneda_id').annotate(valor=Coalesce(valor_expr, Decimal('0.0')))
-    )
-    variantes = (
-        Variacionproducto.objects.filter(producto__activo=True)
-        .values('producto__moneda_id').annotate(valor=Coalesce(valor_expr, Decimal('0.0')))
-    )
+    simples_qs = Producto.objects.filter(activo=True).exclude(tipo='variable')
+    variantes_qs = Variacionproducto.objects.filter(producto__activo=True)
+    if almacen_ids:
+        simples_qs = simples_qs.filter(almacen_id__in=almacen_ids)
+        variantes_qs = variantes_qs.filter(producto__almacen_id__in=almacen_ids)
+    simples = simples_qs.values('moneda_id').annotate(valor=Coalesce(valor_expr, Decimal('0.0')))
+    variantes = variantes_qs.values('producto__moneda_id').annotate(valor=Coalesce(valor_expr, Decimal('0.0')))
     for fila in simples:
         por_moneda[fila['moneda_id']] = por_moneda.get(fila['moneda_id'], Decimal('0')) + fila['valor']
     for fila in variantes:

@@ -81,11 +81,11 @@ def _alertas_cuentas_por_pagar() -> list[dict]:
     return alertas
 
 
-def _alertas_bajo_stock() -> list[dict]:
+def _alertas_bajo_stock(almacen_ids=None) -> list[dict]:
     from apps.inventario.services.stock_service import obtener_productos_bajo_stock
 
     alertas = []
-    for p in obtener_productos_bajo_stock():
+    for p in obtener_productos_bajo_stock(almacen_ids):
         agotado = (p['cantidad'] or 0) <= 0
         alertas.append({
             'tipo': 'stock',
@@ -94,6 +94,11 @@ def _alertas_bajo_stock() -> list[dict]:
             'descripcion': 'Agotado' if agotado else f"Quedan {p['cantidad']} unidades (mínimo {p['stock_minimo'] or 10})",
             'link': '/admin/inventario',
             'dias': None,
+            # Para que el frontend pueda filtrar/agrupar por sucursal del
+            # lado del cliente sin tener que volver a pedir el Centro de
+            # Alertas completo cada vez que el dueño cambia de sucursal
+            # seleccionada (ver `useAlertas`/`SucursalFiltroContext`).
+            'almacen_id': p['almacen_id'],
         })
     return alertas
 
@@ -200,10 +205,20 @@ def _alertas_garantias_por_vencer() -> list[dict]:
     return alertas
 
 
-def obtener_alertas() -> dict:
+def obtener_alertas(almacen_ids=None) -> dict:
+    """
+    `almacen_ids`: filtra solo las alertas de "bajo stock" a esas
+    sucursales/almacenes (ver `Producto.almacen`) -- cuentas por cobrar/
+    pagar, lotes, seguimientos, reclamos y garantías no tienen una sucursal
+    asociada en el modelo actual, así que esas siempre salen completas
+    (filtrarlas sería inventar una atribución que el sistema no registra).
+    """
+    def _bajo_stock() -> list[dict]:
+        return _alertas_bajo_stock(almacen_ids)
+
     alertas: list[dict] = []
     for fuente in (
-        _alertas_cuentas_por_cobrar, _alertas_cuentas_por_pagar, _alertas_bajo_stock,
+        _alertas_cuentas_por_cobrar, _alertas_cuentas_por_pagar, _bajo_stock,
         _alertas_lotes_por_vencer, _alertas_seguimientos_comerciales, _alertas_reclamos_postventa,
         _alertas_garantias_por_vencer,
     ):

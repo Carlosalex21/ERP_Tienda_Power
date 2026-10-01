@@ -69,6 +69,17 @@ class FacturaViewSet(viewsets.ModelViewSet):
             extra['usuario'] = self.request.user
         if serializer.validated_data.get('vendedor') is None:
             extra['vendedor'] = serializer.validated_data.get('usuario') or self.request.user
+        # Igual que `usuario`/`vendedor`: el POS tampoco manda `almacen` --
+        # sin esto, TODA venta quedaba sin sucursal asociada y el filtro por
+        # sucursal del dashboard no tenía de dónde sacar nada. Se asume la
+        # sucursal/almacén asignado al empleado que hizo la venta (ver
+        # `UserMetadata.almacen_asignado`); sin empleado o sin asignación
+        # (tenant de una sola sucursal), queda sin asignar -- no se inventa
+        # un almacén por defecto que podría ser el equivocado.
+        if serializer.validated_data.get('almacen') is None:
+            metadata = getattr(self.request.user, 'metadata', None)
+            if metadata and metadata.almacen_asignado_id:
+                extra['almacen'] = metadata.almacen_asignado
         factura = serializer.save(**extra)
         # Una nota de entrega entrega la mercancía de inmediato -- su stock
         # sale al crearse, no cuando alguien la cobre después (ver

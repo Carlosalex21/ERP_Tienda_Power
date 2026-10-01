@@ -17,18 +17,25 @@ from celery import shared_task
 UMBRAL_BAJO_STOCK_GENERAL = 10
 
 
-def obtener_productos_bajo_stock():
+def obtener_productos_bajo_stock(almacen_ids=None):
     """
     Productos activos (no servicios) con stock por debajo de su
     `stock_minimo` propio, o del umbral general si no tienen uno definido --
     misma regla que ya usa el dashboard (`dashboard_service.py`), extraída
     aquí para que el Centro de Alertas no la reimplemente por tercera vez.
+
+    `almacen_ids`: si se da, limita a los productos asignados a esas
+    sucursales/almacenes (ver `Producto.almacen`) -- para el selector de
+    sucursal del dashboard/alertas. `None`/vacío = todas (tenant completo).
     """
+    qs = Producto.objects.filter(activo=True).exclude(tipo='servicio')
+    if almacen_ids:
+        qs = qs.filter(almacen_id__in=almacen_ids)
     return list(
-        Producto.objects.filter(activo=True).exclude(tipo='servicio').filter(
+        qs.filter(
             Q(stock_minimo__isnull=False, cantidad__lt=F('stock_minimo')) |
             Q(stock_minimo__isnull=True, cantidad__lt=UMBRAL_BAJO_STOCK_GENERAL)
-        ).order_by('cantidad').values('id', 'nombre', 'cantidad', 'stock_minimo')
+        ).order_by('cantidad').values('id', 'nombre', 'cantidad', 'stock_minimo', 'almacen_id')
     )
 
 
