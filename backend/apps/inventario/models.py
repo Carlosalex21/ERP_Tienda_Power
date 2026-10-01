@@ -272,7 +272,13 @@ def variant_image_upload_to(instance, filename):
 
 class Variacionproducto(models.Model):
     producto = models.ForeignKey(Producto, models.DO_NOTHING, blank=True, null=True)
-    atributos = models.ManyToManyField(ValorAtributo)
+    # `blank=True` (antes faltaba): sin esto, DRF exigía la lista no-vacía en
+    # CADA creación de variante -- como el formulario de variantes no tiene
+    # (todavía) un selector de atributos, esto hacía fallar el 100% de los
+    # intentos de crear un producto "Con Variantes" con "Esta lista no puede
+    # estar vacía", sin importar qué tan bien llenados estuvieran los demás
+    # campos.
+    atributos = models.ManyToManyField(ValorAtributo, blank=True)
     nombre = models.CharField(max_length=80)
     sku = models.CharField(unique=True, max_length=50, blank=True, null=True)
     precio = models.DecimalField(max_digits=10, decimal_places=2, null=True)
