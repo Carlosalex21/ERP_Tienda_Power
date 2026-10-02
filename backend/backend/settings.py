@@ -339,7 +339,15 @@ ASGI_APPLICATION = "backend.asgi.application"
 if 'DATABASE_URL' in os.environ:
     # Producción (Coolify)
     DATABASES = {
-        'default': dj_database_url.config(conn_max_age=600, ssl_require=False)
+        # `conn_max_age=0` (cerrar la conexión al terminar cada petición) A
+        # PROPÓSITO: el servidor corre con Daphne (ASGI), donde cada petición
+        # puede ejecutarse en un hilo distinto. Con conexiones persistentes
+        # (antes 600 s) cada hilo se quedaba con la suya y se acumulaban hasta
+        # agotar `max_connections` de Postgres ("sorry, too many clients
+        # already") -- se llegaron a ver 99 de 100 abiertas con tráfico casi
+        # nulo. Abrir una conexión por petición en la red interna de Docker
+        # cuesta milisegundos; quedarse sin conexiones tumba todo el sistema.
+        'default': dj_database_url.config(conn_max_age=int(os.getenv('DB_CONN_MAX_AGE', '0')), ssl_require=False)
     }
     # Usamos el motor de base de datos de django-tenants para asegurar la funcionalidad multi-tenant.
     DATABASES['default']['ENGINE'] = 'django_tenants.postgresql_backend'
