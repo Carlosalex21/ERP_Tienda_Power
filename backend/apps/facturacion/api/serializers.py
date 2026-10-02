@@ -385,11 +385,11 @@ class RetencionSerializer(serializers.ModelSerializer):
     ``crear_comprobante_retencion`` a partir de base y porcentaje.
     """
 
-    # `base` es un monto que el usuario tipea a mano al crear el
-    # comprobante (no se deriva de la factura), así que puede estar en
-    # cualquier moneda -- normalmente la de la factura asociada, cuando hay
-    # una. Se expone para que el frontend pueda etiquetarlo honestamente en
-    # vez de asumir una moneda fija.
+    # Con factura asociada, `base` la fija el backend desde la factura (IVA
+    # de la factura para retenciones de IVA, base imponible para ISLR -- ver
+    # `retencion_service.resolver_base_retencion`) y queda en su moneda; sin
+    # factura es lo que el usuario tipeó. Se expone la moneda para que el
+    # frontend pueda etiquetarla honestamente en vez de asumir una fija.
     factura_moneda_codigo = serializers.CharField(source="factura.moneda_codigo", read_only=True, default=None)
 
     class Meta:

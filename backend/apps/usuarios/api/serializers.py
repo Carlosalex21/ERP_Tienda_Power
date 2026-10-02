@@ -227,6 +227,11 @@ class UserMeSerializer(serializers.ModelSerializer):
         source="departamento.nombre", read_only=True, allow_null=True
     )
     departamento_id = serializers.IntegerField(read_only=True, allow_null=True)
+    # Almacén operativo -- el formulario de Ajustes lo preselecciona y, si no
+    # es admin, lo bloquea (el backend igual lo impone, ver
+    # `AjusteInventarioViewSet.perform_create`).
+    almacen_asignado_id = serializers.IntegerField(read_only=True, allow_null=True)
+    almacen_asignado = serializers.CharField(source="almacen_asignado.nombre", read_only=True, allow_null=True)
     # Módulos que el panel debe ocultarle a ESTE usuario según su rol (ver
     # `Rol.modulos_ocultos` y la pantalla de "Permisos por Rol"). Se calcula
     # aquí (no en un endpoint aparte) porque cualquier empleado ya puede
@@ -240,4 +245,7 @@ class UserMeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = UserMetadata
-        fields = ("id", "email", "first_name", "last_name", "rol", "rol_codigo", "sucursal", "departamento", "departamento_id", "modulos_ocultos")
+        fields = (
+            "id", "email", "first_name", "last_name", "rol", "rol_codigo", "sucursal", "departamento",
+            "departamento_id", "almacen_asignado_id", "almacen_asignado", "modulos_ocultos",
+        )

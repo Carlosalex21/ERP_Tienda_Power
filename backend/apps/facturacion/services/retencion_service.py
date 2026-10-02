@@ -28,6 +28,28 @@ def _round(value: Decimal) -> Decimal:
     return Decimal(value or 0).quantize(CENT, rounding=ROUND_HALF_UP)
 
 
+def resolver_base_retencion(*, factura: Optional[Factura], tipo_retencion: str, base) -> Decimal:
+    """
+    Monto sobre el que se aplica el porcentaje de retención.
+
+    - IVA (Providencia SNAT/2015/0049): se retiene un % (75 o 100) del
+      IMPUESTO causado, no de la base imponible. Con factura asociada se toma
+      su `iva_total` -- antes se usaba la base imponible y el monto retenido
+      salía ~6 veces más alto de lo real (ej. 75% de la base en vez de 75%
+      del IVA).
+    - ISLR / otros: se aplica sobre la base imponible. Con factura asociada y
+      sin base indicada, se toma su `base_imponible`.
+    - Sin factura (retención directa a un proveedor): se respeta la base
+      indicada, no hay documento del cual derivarla.
+    """
+    if factura is not None:
+        if "iva" in tipo_retencion:
+            return Decimal(factura.iva_total or 0)
+        if not base:
+            return Decimal(factura.base_imponible or 0)
+    return Decimal(base or 0)
+
+
 def calcular_retencion(
     *,
     base: Decimal,
@@ -85,7 +107,7 @@ def crear_comprobante_retencion(
             "Debe indicarse una factura o un proveedor para emitir la retención."
         )
 
-    base = Decimal(base or 0)
+    base = resolver_base_retencion(factura=factura, tipo_retencion=tipo_retencion, base=base)
     if base < 0:
         raise RetencionServiceError("La base de la retención no puede ser negativa.")
     if Decimal(porcentaje or 0) < 0:
@@ -106,3 +128,30 @@ def crear_comprobante_retencion(
         monto=monto,
         periodo_imposicion=periodo_imposicion or None,
     )
+
+
+@transaction.atomic
+def actualizar_comprobante_retencion(retencion: Retencion, **cambios) -> Retencion:
+    """
+    Edita un comprobante recalculando base y monto -- antes la edición
+    guardaba la nueva base/porcentaje pero dejaba el `monto` viejo (es de
+    solo lectura en el serializer y nadie lo recalculaba). El número de
+    comprobante no cambia.
+    """
+    for campo, valor in cambios.items():
+        setattr(retencion, campo, valor)
+
+    if retencion.factura is None and retencion.proveedor is None:
+        raise RetencionServiceError(
+            "Debe indicarse una factura o un proveedor para emitir la retención."
+        )
+    retencion.base = resolver_base_retencion(
+        factura=retencion.factura, tipo_retencion=retencion.tipo_retencion, base=retencion.base,
+    )
+    if retencion.base < 0 or Decimal(retencion.porcentaje or 0) < 0:
+        raise RetencionServiceError("La base y el porcentaje de la retención no pueden ser negativos.")
+    retencion.monto = calcular_retencion(
+        base=retencion.base, tipo_retencion=retencion.tipo_retencion, porcentaje=retencion.porcentaje,
+    )
+    retencion.save()
+    return retencion

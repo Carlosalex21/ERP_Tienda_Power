@@ -1,9 +1,9 @@
 # apps/inventario/api/views_ajustes.py
-from rest_framework import viewsets
+from rest_framework import serializers, viewsets
 from rest_framework.response import Response
 
-from apps.core.permissions import IsAdminOrAlmacenista
-from apps.inventario.models import AjusteInventario
+from apps.core.permissions import IsAdminOrAlmacenista, ROL_ADMIN, codigo_rol
+from apps.inventario.models import AjusteInventario, Almacen
 from apps.inventario.api.serializers_ajustes import AjusteInventarioSerializer, AjusteInventarioEditSerializer
 from apps.proveedores.core.proveedores_service import sincronizar_cuenta_por_pagar_desde_ajuste
 
@@ -33,6 +33,38 @@ class AjusteInventarioViewSet(viewsets.ModelViewSet):
         if self.action == 'partial_update':
             return AjusteInventarioEditSerializer
         return AjusteInventarioSerializer
+
+    def perform_create(self, serializer):
+        # En qué almacén entra/sale la mercancía:
+        # - Un administrador elige cualquiera.
+        # - Cualquier otro rol (almacenista) queda atado a su almacén
+        #   operativo (`UserMetadata.almacen_asignado`) -- no puede cargarle
+        #   stock a otra sucursal, aunque mande otro id.
+        # - Sin almacén indicado se asume el del empleado; si el tenant tiene
+        #   uno solo, ese. Con varios y sin forma de saberlo, se pide
+        #   explícitamente en vez de dejar el ajuste "sin sucursal".
+        metadata = getattr(self.request.user, 'metadata', None)
+        es_admin = bool(metadata) and codigo_rol(metadata.rol) == ROL_ADMIN
+        almacen_propio = getattr(metadata, 'almacen_asignado', None)
+        almacen = serializer.validated_data.get('almacen')
+
+        if not es_admin and almacen_propio is not None:
+            if almacen is not None and almacen.pk != almacen_propio.pk:
+                raise serializers.ValidationError({
+                    'almacen': f'Solo puedes registrar ajustes en tu almacén asignado ({almacen_propio.nombre}).',
+                })
+            almacen = almacen_propio
+
+        if almacen is None:
+            almacen = almacen_propio
+        if almacen is None:
+            activos = list(Almacen.objects.filter(activo=True)[:2])
+            if len(activos) == 1:
+                almacen = activos[0]
+            elif len(activos) > 1:
+                raise serializers.ValidationError({'almacen': 'Indica en qué almacén entra o sale esta mercancía.'})
+
+        serializer.save(almacen=almacen)
 
     def perform_update(self, serializer):
         ajuste = serializer.save()

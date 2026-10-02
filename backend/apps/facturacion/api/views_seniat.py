@@ -34,6 +34,7 @@ from apps.facturacion.services.notas_service import (
 )
 from apps.facturacion.services.retencion_service import (
     RetencionServiceError,
+    actualizar_comprobante_retencion,
     crear_comprobante_retencion,
 )
 
@@ -252,6 +253,19 @@ class RetencionViewSet(viewsets.ModelViewSet):
             periodo_imposicion=data.get("periodo_imposicion"),
         )
         serializer.instance = comprobante
+
+    def perform_update(self, serializer):
+        """Edita recalculando base y monto (ver `actualizar_comprobante_retencion`)."""
+        serializer.instance = actualizar_comprobante_retencion(serializer.instance, **serializer.validated_data)
+
+    def update(self, request, *args, **kwargs):
+        try:
+            return super().update(request, *args, **kwargs)
+        except RetencionServiceError as exc:
+            return error_response(
+                [{"code": "retencion_error", "detail": str(exc), "field": None}],
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
 
     def create(self, request, *args, **kwargs):
         """Crea la retención y envuelve la respuesta en el estándar."""
