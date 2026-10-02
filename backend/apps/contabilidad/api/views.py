@@ -1,5 +1,6 @@
 from datetime import date
 
+from apps.core.uploads import validar_archivo_subido
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
 from rest_framework.parsers import MultiPartParser, FormParser, JSONParser
@@ -197,9 +198,7 @@ class AsientoContableViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='comprobante', parser_classes=[MultiPartParser, FormParser])
     def subir_comprobante(self, request, pk=None):
         asiento = self.get_object()
-        archivo = request.FILES.get('comprobante')
-        if not archivo:
-            return Response({"error": "No se recibió ningún archivo."}, status=status.HTTP_400_BAD_REQUEST)
+        archivo = validar_archivo_subido(request.FILES.get('comprobante'), permitir_pdf=True, max_mb=10, campo='comprobante')
         asiento.comprobante = archivo
         asiento.save(update_fields=['comprobante'])
         return Response(self.get_serializer(asiento).data)

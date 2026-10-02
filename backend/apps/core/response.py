@@ -79,80 +79,124 @@ def error_response(
     )
 
 
-def error_response_from_dict(
-    error_dict: Dict[str, Any],
-    status_code: int = status.HTTP_400_BAD_REQUEST,
-) -> Response:
+# Claves que DRF/las vistas usan para un error "general" (no atado a un campo
+# del formulario): `{"detail": ...}`, `{"error": ...}`, `non_field_errors`...
+_CLAVES_GLOBALES = frozenset({"detail", "error", "errors", "mensaje", "message", "non_field_errors"})
+
+
+def _aplanar_errores(valor: Any, campo: Optional[str], salida: List[Dict[str, Any]]) -> None:
     """
-    Convierte un diccionario de errores de DRF en el formato estandarizado.
+    Recorre cualquier estructura de errores de DRF y la deja plana.
 
-    Args:
-        error_dict: Diccionario ``{campo: [mensajes]}`` o ``{detail: msg}``.
-        status_code: Código HTTP de la respuesta.
-
-    Returns:
-        Response: Respuesta de error estandarizada.
+    Un serializer con líneas anidadas (ej. ``detalles_para_crear``) devuelve
+    ``{"detalles_para_crear": [{}, {"cantidad": ["..."]}]}``: antes cada
+    dict interno se convertía con ``str()`` y el usuario veía basura tipo
+    ``{'cantidad': [ErrorDetail(...)]}``. Ahora el campo es la ruta
+    (``detalles_para_crear.1.cantidad``) y el mensaje es solo el texto.
     """
-    errors: List[Dict[str, Any]] = []
-
-    if isinstance(error_dict, dict):
-        for field, value in error_dict.items():
-            if isinstance(value, (list, tuple)):
-                for item in value:
-                    errors.append({
-                        "code": field,
-                        "detail": str(item),
-                        "field": None if field == "detail" else str(field),
-                    })
+    if isinstance(valor, dict):
+        for clave, sub in valor.items():
+            clave = str(clave)
+            if campo is None and clave in _CLAVES_GLOBALES:
+                ruta = None
+                codigo = clave
             else:
-                errors.append({
-                    "code": field,
-                    "detail": str(value),
-                    "field": None if field == "detail" else str(field),
-                })
-    elif isinstance(error_dict, (list, tuple)):
-        for item in error_dict:
-            if isinstance(item, dict):
-                errors.append({
+                ruta = clave if campo is None else f"{campo}.{clave}"
+                codigo = clave
+            if isinstance(sub, (dict, list, tuple)):
+                _aplanar_errores(sub, ruta, salida)
+            else:
+                salida.append({"code": codigo, "detail": str(sub), "field": ruta})
+    elif isinstance(valor, (list, tuple)):
+        for indice, item in enumerate(valor):
+            if isinstance(item, dict) and set(item.keys()) >= {"detail"} and campo is None:
+                salida.append({
                     "code": item.get("code", "error"),
                     "detail": str(item.get("detail", "")),
                     "field": item.get("field"),
                 })
+            elif isinstance(item, (dict, list, tuple)):
+                if item:  # los dicts vacíos son líneas válidas dentro de una lista con errores
+                    _aplanar_errores(item, f"{campo}.{indice}" if campo else None, salida)
             else:
-                errors.append({
-                    "code": "error",
-                    "detail": str(item),
-                    "field": None,
-                })
+                salida.append({"code": campo or "error", "detail": str(item), "field": campo})
     else:
-        errors.append({
-            "code": "error",
-            "detail": str(error_dict),
-            "field": None,
-        })
+        salida.append({"code": "error", "detail": str(valor), "field": campo})
 
-    return error_response(errors, status_code=status_code)
+
+def errores_desde_payload(payload: Any) -> List[Dict[str, Any]]:
+    """Lista estándar ``[{code, detail, field}]`` a partir de cualquier payload de error."""
+    errores: List[Dict[str, Any]] = []
+    _aplanar_errores(payload, None, errores)
+    return [e for e in errores if e["detail"]]
+
+
+def error_response_from_dict(
+    error_dict: Any,
+    status_code: int = status.HTTP_400_BAD_REQUEST,
+) -> Response:
+    """
+    Convierte el payload de error de DRF (o de una vista que devolvió
+    ``Response({"error": "..."}, status=400)``) en el formato estandarizado.
+    """
+    errores = errores_desde_payload(error_dict) or [
+        {"code": "error", "detail": "No se pudo completar la operación.", "field": None}
+    ]
+    return error_response(errores, status_code=status_code)
 
 
 class StandardResultsSetPagination(PageNumberPagination):
     """
-    Paginación estándar que envuelve los resultados en ``meta.pagination``.
+    Paginación estándar con envoltura ``meta.pagination``.
+
+    Dos modos, según lo que pida el cliente:
+
+    - **Paginado** (si viene ``?page=`` o ``?page_size=``): páginas de
+      ``page_size`` (20 por defecto, máx. 200). Es lo que usan las tablas
+      grandes con paginación del lado del servidor.
+    - **Lista completa** (sin ninguno de los dos): devuelve TODOS los
+      registros hasta ``LISTA_COMPLETA_MAX``. Antes se cortaba en 20 sin
+      avisar, y como casi todo el frontend (POS, selectores, listados) pide
+      el endpoint "a secas" y espera la lista entera, un negocio con más de
+      20 productos/proveedores/clientes veía la lista recortada. Si el total
+      supera el tope, ``meta.pagination.truncated`` lo indica.
     """
 
     page_size = 20
     page_size_query_param = "page_size"
     max_page_size = 200
+    LISTA_COMPLETA_MAX = 5000
+
+    _lista_completa = False
+
+    def paginate_queryset(self, queryset, request, view=None):
+        parametros = request.query_params
+        self._lista_completa = "page" not in parametros and "page_size" not in parametros
+        if not self._lista_completa:
+            return super().paginate_queryset(queryset, request, view)
+
+        self.request = request
+        paginador = self.django_paginator_class(queryset, self.LISTA_COMPLETA_MAX)
+        self.page = paginador.page(1)
+        return list(self.page)
+
+    def get_page_size(self, request):
+        if self._lista_completa:
+            return self.LISTA_COMPLETA_MAX
+        return super().get_page_size(request)
 
     def get_paginated_response(self, data: Any) -> Response:
         """Construye la respuesta paginada estandarizada."""
+        total = self.page.paginator.count
         meta = {
             "pagination": {
-                "count": self.page.paginator.count,
+                "count": total,
                 "next": self.get_next_link(),
                 "previous": self.get_previous_link(),
                 "page": self.page.number,
                 "page_size": self.get_page_size(self.request),
                 "total_pages": self.page.paginator.num_pages,
+                "truncated": bool(self._lista_completa and total > self.LISTA_COMPLETA_MAX),
             }
         }
         return standard_response(data=data, meta=meta)

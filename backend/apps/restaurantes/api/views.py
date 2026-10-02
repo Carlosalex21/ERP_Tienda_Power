@@ -1,5 +1,6 @@
 import random
 
+from apps.core.uploads import validar_archivo_subido
 from django.utils import timezone
 from rest_framework import viewsets, status
 from rest_framework.decorators import action
@@ -211,9 +212,7 @@ class PedidoMesaViewSet(viewsets.ModelViewSet):
     @action(detail=True, methods=['post'], url_path='comprobante-pago', parser_classes=[MultiPartParser, FormParser])
     def subir_comprobante_pago(self, request, pk=None):
         pedido = self.get_object()
-        archivo = request.FILES.get('comprobante_pago')
-        if not archivo:
-            return Response({"error": "No se recibió ningún archivo."}, status=status.HTTP_400_BAD_REQUEST)
+        archivo = validar_archivo_subido(request.FILES.get('comprobante_pago'), max_mb=5, campo='comprobante_pago')
         pedido.comprobante_pago = archivo
         pedido.save(update_fields=['comprobante_pago'])
         notificar_pedido_actualizado(pedido)
@@ -358,9 +357,7 @@ class SubirComprobantePagoPublicoView(APIView):
         pedido = PedidoMesa.objects.filter(token_publico=token, estado='abierto').first()
         if pedido is None:
             return Response({"error": "Cuenta no encontrada o ya cerrada."}, status=status.HTTP_404_NOT_FOUND)
-        archivo = request.FILES.get('comprobante_pago')
-        if not archivo:
-            return Response({"error": "No se recibió ningún archivo."}, status=status.HTTP_400_BAD_REQUEST)
+        archivo = validar_archivo_subido(request.FILES.get('comprobante_pago'), max_mb=5, campo='comprobante_pago')
         pedido.comprobante_pago = archivo
         pedido.save(update_fields=['comprobante_pago'])
         notificar_pedido_actualizado(pedido)

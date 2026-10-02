@@ -554,3 +554,26 @@ SPECTACULAR_SETTINGS = {
         {'jwtAuth': []},
     ],
 }
+
+
+# --- Logging ---
+# Todo a la salida estándar (los contenedores la recogen con `docker logs`),
+# con fecha, nivel y módulo. Los errores 500 (ver `apps/core/error_views.py`)
+# y los de `django.request` quedan con su traceback completo.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "estandar": {"format": "%(asctime)s %(levelname)s [%(name)s] %(message)s"},
+    },
+    "handlers": {
+        "consola": {"class": "logging.StreamHandler", "formatter": "estandar"},
+    },
+    "root": {"handlers": ["consola"], "level": os.getenv("LOG_LEVEL", "INFO")},
+    "loggers": {
+        "django.request": {"handlers": ["consola"], "level": "WARNING", "propagate": False},
+        "erp.errores": {"handlers": ["consola"], "level": "ERROR", "propagate": False},
+        # Sin esto, cada consulta SQL ensucia el log si alguien sube LOG_LEVEL a DEBUG.
+        "django.db.backends": {"level": "WARNING"},
+    },
+}

@@ -197,6 +197,26 @@ class FacturaCompraViewSet(viewsets.ReadOnlyModelViewSet):
             qs = qs.filter(fecha_emision__lte=params['fecha_hasta'])
         return qs
 
+    @action(detail=False, methods=['get'])
+    def resumen(self, request):
+        """
+        Totales de TODO lo que cumple los filtros (no solo la página en pantalla):
+        lo comprado, el IVA crédito fiscal y lo que aún se le debe a proveedores.
+        """
+        from django.db.models import DecimalField, ExpressionWrapper, F, Sum
+
+        vigentes = self.get_queryset().filter(estado='registrada')
+        totales = vigentes.aggregate(total=Sum('total'))
+        iva = vigentes.filter(tipo_documento='factura').aggregate(iva=Sum('iva'))['iva']
+        saldo = CuentaPorPagar.objects.filter(factura_compra__in=vigentes).exclude(estado='anulada').aggregate(
+            saldo=Sum(ExpressionWrapper(F('monto') - F('monto_pagado'), output_field=DecimalField())),
+        )['saldo']
+        return Response({
+            'total': str(totales['total'] or 0),
+            'iva': str(iva or 0),
+            'saldo': str(saldo or 0),
+        })
+
     def create(self, request, *args, **kwargs):
         serializer = CrearFacturaCompraSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)

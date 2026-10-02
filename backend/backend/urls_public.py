@@ -29,3 +29,7 @@ urlpatterns = [
     # Login sin contraseña para el tenant demo público (ver DemoAutoLoginView).
     path('api/v1/demo/login/', DemoAutoLoginView.as_view(), name='demo_auto_login'),
 ]
+
+# Errores de rutas /api/ en JSON estándar (ver apps/core/error_views.py).
+handler404 = 'apps.core.error_views.not_found'
+handler500 = 'apps.core.error_views.server_error'

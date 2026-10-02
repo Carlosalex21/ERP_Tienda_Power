@@ -75,6 +75,12 @@ def debug_tenant(request):
     })
 
 # Añádelo a tus urlpatterns
-urlpatterns += [
-    path('api/debug-tenant/', debug_tenant),
-]
+# Solo en desarrollo: expone el esquema/tenant/host de la petición.
+if settings.DEBUG:
+    urlpatterns += [
+        path('api/debug-tenant/', debug_tenant),
+    ]
+
+# Errores de rutas /api/ en JSON estándar (ver apps/core/error_views.py).
+handler404 = 'apps.core.error_views.not_found'
+handler500 = 'apps.core.error_views.server_error'

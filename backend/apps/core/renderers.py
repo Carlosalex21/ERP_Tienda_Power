@@ -52,6 +52,21 @@ class StandardJSONRenderer(JSONRenderer):
         if isinstance(data, dict) and set(data.keys()) == {"data", "meta", "errors"}:
             return super().render(data, accepted_media_type, renderer_context)
 
+        # 3.5. Un error (4xx/5xx) que la vista armó a mano --
+        # `Response({"error": "..."}, status=400)`, y hay más de cien así --
+        # NO es un éxito: antes se envolvía como `data` con `errors: null` y
+        # el frontend nunca veía el mensaje. Se normaliza aquí, en un solo
+        # lugar, a `errors: [{code, detail, field}]`.
+        if response is not None and getattr(response, "status_code", 200) >= 400:
+            from apps.core.response import errores_desde_payload
+
+            errores = errores_desde_payload(data) or [
+                {"code": "error", "detail": "No se pudo completar la operación.", "field": None}
+            ]
+            return super().render(
+                {"data": None, "meta": {}, "errors": errores}, accepted_media_type, renderer_context,
+            )
+
         # 4. Envolver en la estructura estándar.
         wrapped: Dict[str, Any] = {
             "data": data,
