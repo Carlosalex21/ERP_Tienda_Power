@@ -24,11 +24,9 @@ class Proveedor(models.Model):
 
 class CuentaPorPagar(models.Model):
     """
-    Una factura/nota de un proveedor que le debemos -- se crea sola cuando
-    se registra una compra con proveedor (ver
-    `apps.inventario.services.stock_service.crear_y_aplicar_ajuste` y
-    `apps.proveedores.core.proveedores_service.crear_cuenta_por_pagar_desde_ajuste`),
-    igual que una venta a crédito genera su propio saldo en Cuentas por
+    Una factura/nota de un proveedor que le debemos -- se crea sola al
+    registrar una `FacturaCompra` (ver
+    `apps.proveedores.core.facturas_compra_service`), igual que una venta a crédito genera su propio saldo en Cuentas por
     Cobrar (ver `apps.facturacion.services.pagos_service`) -- antes no había
     NINGÚN registro de qué compras seguían pendientes de pagarle al
     proveedor, solo el asiento contable agregado (sin desglose por
@@ -52,6 +50,12 @@ class CuentaPorPagar(models.Model):
     # compra original (nota de entrega/factura del proveedor).
     ajuste_origen = models.ForeignKey(
         'inventario.AjusteInventario', on_delete=models.SET_NULL, null=True, blank=True, related_name='cuentas_por_pagar',
+    )
+    # Desde el módulo de Compras, toda cuenta nace de una `FacturaCompra`
+    # (`ajuste_origen` queda solo para las cuentas históricas creadas desde
+    # Ajustes de Inventario, antes de que existiera ese módulo).
+    factura_compra = models.ForeignKey(
+        'proveedores.FacturaCompra', on_delete=models.SET_NULL, null=True, blank=True, related_name='cuentas_por_pagar',
     )
     observaciones = models.TextField(blank=True, default='')
     usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
@@ -93,12 +97,11 @@ class PagoProveedor(models.Model):
 class OrdenCompra(models.Model):
     """
     Pedido formal a un proveedor -- lo que le pedimos, ANTES de que llegue.
-    Se recibe en uno o varios lotes (`registrar_recepcion_orden_compra`):
-    cada recepción genera su propio `AjusteInventario` de entrada (con lo
-    que ya se descuenta/paga solo, ver `CuentaPorPagar`), así que una orden
-    de compra no duplica esa lógica -- solo agrega el paso previo de "esto
-    es lo que pedí" para poder comparar contra "esto es lo que en verdad
-    llegó" línea por línea.
+    Se recibe en uno o varios lotes, cada uno con la `FacturaCompra` (o
+    nota de entrega) que trae el proveedor: esa factura mueve el stock,
+    crea la cuenta por pagar y va al Libro de Compras. La orden solo agrega
+    el paso previo de "esto es lo que pedí" para poder comparar contra
+    "esto es lo que en verdad llegó" línea por línea.
     """
     ESTADO_CHOICES = (
         ('borrador', 'Borrador'),
@@ -157,3 +160,100 @@ class OrdenCompraDetalle(models.Model):
     @property
     def cantidad_pendiente(self) -> int:
         return max(self.cantidad_pedida - self.cantidad_recibida, 0)
+
+
+class FacturaCompra(models.Model):
+    """
+    Documento de compra recibido de un proveedor -- la factura fiscal (o la
+    nota de entrega, cuando el proveedor no factura) con la que entra la
+    mercancía. Es el ÚNICO camino por el que una compra mueve inventario,
+    crea su `CuentaPorPagar`, se asienta en contabilidad y (si es factura
+    fiscal) aparece en el Libro de Compras -- ver
+    `apps.proveedores.core.facturas_compra_service.registrar_factura_compra`.
+
+    Antes todo esto se cargaba como un "Ajuste de Inventario" con motivo
+    "compra": el ajuste no tenía base/IVA, así que el Libro de Compras nunca
+    se llenaba y el IVA crédito fiscal no existía en ningún lado. Los
+    ajustes quedan ahora solo para movimientos internos (conteo, merma...).
+    """
+    TIPO_DOCUMENTO_CHOICES = (
+        ('factura', 'Factura fiscal'),
+        ('nota_entrega', 'Nota de entrega (sin factura)'),
+    )
+    ESTADO_CHOICES = (
+        ('registrada', 'Registrada'),
+        ('anulada', 'Anulada'),
+    )
+    proveedor = models.ForeignKey(Proveedor, on_delete=models.PROTECT, related_name='facturas_compra')
+    tipo_documento = models.CharField(max_length=15, choices=TIPO_DOCUMENTO_CHOICES, default='factura')
+    numero_factura = models.CharField(max_length=50, help_text='Número de la factura (o de la nota de entrega) del proveedor.')
+    numero_control = models.CharField(max_length=50, blank=True, default='', help_text='Número de control SENIAT impreso en la factura del proveedor.')
+    fecha_emision = models.DateField(help_text='Fecha impresa en el documento del proveedor.')
+    orden_compra = models.ForeignKey(OrdenCompra, on_delete=models.SET_NULL, null=True, blank=True, related_name='facturas')
+    almacen = models.ForeignKey('inventario.Almacen', on_delete=models.SET_NULL, null=True, blank=True)
+    # Montos en la moneda base del tenant (la misma del Libro de Compras y de
+    # los costos de inventario).
+    monto_exento = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    base_imponible = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    porcentaje_iva = models.DecimalField(max_digits=5, decimal_places=2, default=0)
+    iva = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    total = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    # Sumas de los comprobantes de retención emitidos sobre esta factura
+    # (ver `Retencion.factura_compra`) -- se recalculan solas, no se editan.
+    retencion_iva = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    retencion_islr = models.DecimalField(max_digits=14, decimal_places=2, default=0)
+    ajuste = models.ForeignKey(
+        'inventario.AjusteInventario', on_delete=models.SET_NULL, null=True, blank=True, related_name='facturas_compra',
+        help_text='Entrada de inventario generada por esta compra.',
+    )
+    asiento = models.ForeignKey(
+        'contabilidad.AsientoContable', on_delete=models.SET_NULL, null=True, blank=True, related_name='+',
+    )
+    estado = models.CharField(max_length=12, choices=ESTADO_CHOICES, default='registrada')
+    observaciones = models.TextField(blank=True, default='')
+    usuario = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    fecha_creacion = models.DateTimeField(auto_now_add=True)
+    fecha_anulacion = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = 'FacturaCompra'
+        ordering = ['-fecha_emision', '-id']
+        verbose_name = 'Factura de Compra'
+        verbose_name_plural = 'Facturas de Compra'
+        constraints = [
+            # Un proveedor no puede emitir dos veces el mismo número -- evita
+            # cargar la misma factura dos veces (doble stock, doble deuda).
+            models.UniqueConstraint(
+                fields=['proveedor', 'tipo_documento', 'numero_factura'],
+                condition=models.Q(estado='registrada'),
+                name='uniq_factura_compra_proveedor_numero',
+            ),
+        ]
+
+    def __str__(self) -> str:
+        return f'{self.get_tipo_documento_display()} {self.numero_factura} -- {self.proveedor.nombre}'
+
+    @property
+    def total_retenido(self):
+        return (self.retencion_iva or 0) + (self.retencion_islr or 0)
+
+    @property
+    def neto_a_pagar(self):
+        return (self.total or 0) - self.total_retenido
+
+
+class FacturaCompraDetalle(models.Model):
+    """Línea de producto de una `FacturaCompra` -- costo unitario SIN IVA (el IVA es crédito fiscal, no costo)."""
+    factura = models.ForeignKey(FacturaCompra, on_delete=models.CASCADE, related_name='detalles')
+    producto = models.ForeignKey('inventario.Producto', on_delete=models.PROTECT)
+    variante = models.ForeignKey('inventario.Variacionproducto', on_delete=models.PROTECT, null=True, blank=True)
+    orden_detalle = models.ForeignKey(OrdenCompraDetalle, on_delete=models.SET_NULL, null=True, blank=True, related_name='+')
+    cantidad = models.PositiveIntegerField()
+    costo_unitario = models.DecimalField(max_digits=14, decimal_places=6)
+
+    class Meta:
+        db_table = 'FacturaCompraDetalle'
+
+    @property
+    def subtotal(self):
+        return self.cantidad * self.costo_unitario

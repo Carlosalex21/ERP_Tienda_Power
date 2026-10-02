@@ -53,11 +53,17 @@ def registrar_en_libro_compra_venta(
     # numerada, no solo la primera vez) como potencialmente más de una vez
     # para el mismo documento -- sin upsert, cada guardado posterior
     # duplicaría la línea en el Libro en vez de mantenerla al día.
+    #
+    # `tipo_libro` también es parte de la llave: sin él, una venta y una
+    # compra con el mismo número ("Factura 000123") se pisaban entre sí.
+    # Las compras igual no pasan por aquí (se identifican por su
+    # `factura_compra`, ver `facturas_compra_service.sincronizar_libro_compras`).
     linea, _creada = LibroCompraVenta.objects.update_or_create(
+        tipo_libro=tipo_libro,
         tipo_documento=tipo_documento,
         numero_documento=numero_documento,
+        factura_compra__isnull=True,
         defaults=dict(
-            tipo_libro=tipo_libro,
             fecha_operacion=fecha_operacion,
             numero_control=numero_control,
             rif=rif,

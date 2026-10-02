@@ -46,10 +46,10 @@ PLAN_CUENTAS_DEFAULT = [
     ('2.1', 'Pasivo Corriente', 'pasivo', False, '2', None),
     ('2.1.01', 'Cuentas por Pagar Proveedores', 'pasivo', True, '2.1', 'cuentas_por_pagar'),
     ('2.1.02', 'IVA Débito Fiscal', 'pasivo', True, '2.1', 'iva_por_pagar'),
-    ('2.1.03', 'Retenciones por Pagar', 'pasivo', True, '2.1', None),
+    ('2.1.03', 'Retenciones por Pagar', 'pasivo', True, '2.1', 'retenciones_pagar'),
     ('2.1.04', 'Sueldos y Salarios por Pagar', 'pasivo', True, '2.1', None),
     ('3', 'PATRIMONIO', 'patrimonio', False, None, None),
-    ('3.1', 'Capital Social', 'patrimonio', True, '3', None),
+    ('3.1', 'Capital Social', 'patrimonio', True, '3', 'capital'),
     ('3.2', 'Utilidades Retenidas', 'patrimonio', True, '3', None),
     ('3.3', 'Utilidad del Ejercicio', 'patrimonio', True, '3', None),
     ('4', 'INGRESOS', 'ingreso', False, None, None),
@@ -787,11 +787,19 @@ def generar_asiento_automatico_ajuste_inventario(ajuste) -> AsientoContable | No
                 {'cuenta_id': cuenta_inventario.id, 'debe': 0, 'haber': total_valor},
             ]
         else:
+            # Las compras ya no generan su asiento aquí sino desde la
+            # `FacturaCompra` (con el IVA crédito fiscal separado, ver
+            # `generar_asiento_automatico_factura_compra`). Esta rama queda
+            # para ajustes históricos con motivo de compra.
             es_compra = ajuste.motivo in ('compra_con_factura', 'compra_sin_factura')
             if es_compra and ajuste.proveedor_id:
                 cuenta_contra = obtener_cuenta_por_rol(empresa, 'cuentas_por_pagar')
             elif es_compra:
                 cuenta_contra = obtener_cuenta_por_rol(empresa, 'caja')
+            elif ajuste.motivo == 'inventario_inicial':
+                # El inventario con el que arranca el negocio es un aporte,
+                # no un ingreso del periodo.
+                cuenta_contra = obtener_cuenta_por_rol(empresa, 'capital') or obtener_cuenta_por_rol(empresa, 'otros_ingresos')
             else:
                 cuenta_contra = obtener_cuenta_por_rol(empresa, 'otros_ingresos')
             if cuenta_contra is None:
@@ -813,6 +821,105 @@ def generar_asiento_automatico_ajuste_inventario(ajuste) -> AsientoContable | No
         import logging
         logging.getLogger(__name__).warning('No se pudo generar el asiento automático del ajuste de inventario %s', getattr(ajuste, 'id', '?'), exc_info=True)
         return None
+
+
+def generar_asiento_automatico_factura_compra(factura) -> AsientoContable | None:
+    """
+    Asiento de una `FacturaCompra` con mercancía (mismo criterio defensivo
+    que el resto: nunca tumba la compra ya registrada):
+
+        Debe  Inventario            base imponible + exento
+        Debe  IVA Crédito Fiscal    IVA de la factura
+        Haber Cuentas por Pagar     total
+
+    Si el plan de cuentas no tiene la cuenta de IVA crédito, el IVA se suma
+    al inventario (mejor un asiento cuadrado que ninguno). Una compra sin
+    líneas de producto (un gasto: alquiler, servicios...) no genera asiento
+    -- el sistema no sabe a qué cuenta de gasto corresponde; el contador lo
+    registra a mano.
+    """
+    try:
+        if not factura.detalles.exists():
+            return None
+        empresa = obtener_o_crear_empresa_propia()
+        if not empresa.activo:
+            return None
+        cuenta_inventario = obtener_cuenta_por_rol(empresa, 'inventario')
+        cuenta_cxp = obtener_cuenta_por_rol(empresa, 'cuentas_por_pagar')
+        if not (cuenta_inventario and cuenta_cxp):
+            return None
+        cuenta_iva = obtener_cuenta_por_rol(empresa, 'iva_por_cobrar')
+
+        total = _round(factura.total)
+        iva = _round(factura.iva)
+        if total <= 0:
+            return None
+        valor_inventario = total - iva if cuenta_iva and iva > 0 else total
+
+        lineas = [{'cuenta_id': cuenta_inventario.id, 'debe': valor_inventario, 'haber': 0}]
+        if cuenta_iva and iva > 0:
+            lineas.append({'cuenta_id': cuenta_iva.id, 'debe': iva, 'haber': 0})
+        lineas.append({'cuenta_id': cuenta_cxp.id, 'debe': 0, 'haber': total})
+
+        return crear_asiento_contable(
+            empresa=empresa,
+            fecha=factura.fecha_emision,
+            descripcion=f'Compra {factura.get_tipo_documento_display().lower()} {factura.numero_factura} -- {factura.proveedor.nombre}',
+            lineas=lineas,
+            usuario=factura.usuario,
+            origen='compra',
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('No se pudo generar el asiento de la factura de compra %s', getattr(factura, 'id', '?'), exc_info=True)
+        return None
+
+
+def generar_asiento_automatico_retencion_proveedor(retencion) -> AsientoContable | None:
+    """
+    Retención emitida a un proveedor: esa parte de la deuda ya no se le paga
+    a él sino al fisco --
+
+        Debe  Cuentas por Pagar      monto retenido
+        Haber Retenciones por Pagar  monto retenido
+    """
+    try:
+        monto = _round(retencion.monto)
+        if monto <= 0:
+            return None
+        empresa = obtener_o_crear_empresa_propia()
+        if not empresa.activo:
+            return None
+        cuenta_cxp = obtener_cuenta_por_rol(empresa, 'cuentas_por_pagar')
+        cuenta_ret = obtener_cuenta_por_rol(empresa, 'retenciones_pagar')
+        if not (cuenta_cxp and cuenta_ret):
+            return None
+        return crear_asiento_contable(
+            empresa=empresa,
+            fecha=timezone.now().date(),
+            descripcion=f'Retención {retencion.get_tipo_retencion_display()} N° {retencion.numero_comprobante or retencion.pk}',
+            lineas=[
+                {'cuenta_id': cuenta_cxp.id, 'debe': monto, 'haber': 0},
+                {'cuenta_id': cuenta_ret.id, 'debe': 0, 'haber': monto},
+            ],
+            usuario=None,
+            origen='retencion',
+        )
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('No se pudo generar el asiento de la retención %s', getattr(retencion, 'id', '?'), exc_info=True)
+        return None
+
+
+def anular_asiento_si_existe(asiento) -> None:
+    """Anula un asiento automático (si existe y sigue vigente) sin propagar errores."""
+    if asiento is None or asiento.estado == 'anulado':
+        return
+    try:
+        anular_asiento_contable(asiento)
+    except Exception:
+        import logging
+        logging.getLogger(__name__).warning('No se pudo anular el asiento %s', asiento.pk, exc_info=True)
 
 
 def generar_asiento_automatico_pago_proveedor(pago) -> AsientoContable | None:

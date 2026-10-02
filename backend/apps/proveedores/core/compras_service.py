@@ -60,79 +60,58 @@ def cancelar_orden_compra(orden: OrdenCompra) -> OrdenCompra:
     return orden
 
 
-@transaction.atomic
-def registrar_recepcion_orden_compra(*, orden: OrdenCompra, lineas_recibidas, numero_documento, usuario, motivo='compra_con_factura'):
+def recibir_lineas_orden_compra(orden: OrdenCompra, lineas: list[tuple[int, int]]) -> dict[int, OrdenCompraDetalle]:
     """
-    Recibe (total o parcialmente) una orden de compra: por cada línea con
-    cantidad > 0 recibida, aplica una ENTRADA real de inventario a través
-    del mismo camino de siempre (`stock_service.crear_y_aplicar_ajuste`) --
-    así, sin duplicar ni una línea de lógica, la recepción ya actualiza el
-    costo promedio, genera su `CuentaPorPagar` con el proveedor y postea su
-    asiento contable automático (ver Fase 6 y 9). Una orden de compra no es
-    más que el paso "esto pedí" antes de esa misma entrada de siempre.
-
-    `lineas_recibidas` es una lista de `{detalle_id, cantidad, costo_unitario}`.
+    Suma a la orden lo que llegó con una factura de compra (ver
+    `facturas_compra_service.registrar_factura_compra`, que es quien mueve
+    el stock y crea la deuda). `lineas` es una lista de
+    `(orden_detalle_id, cantidad)`. Valida que nada exceda lo pendiente y
+    actualiza el estado de la orden. Devuelve los detalles por id.
     """
-    from apps.inventario.services.stock_service import crear_y_aplicar_ajuste
-
     if orden.estado not in ('enviada', 'recibida_parcial'):
         raise OrdenCompraError('Solo una orden enviada o parcialmente recibida se puede recibir.')
-    if not lineas_recibidas:
-        raise OrdenCompraError('Indica al menos una línea con cantidad recibida.')
 
-    detalles_por_id = {d.id: d for d in orden.detalles.select_for_update()}
-    detalles_para_ajuste = []
-    detalles_a_actualizar = []
-
-    for linea in lineas_recibidas:
-        detalle = detalles_por_id.get(linea['detalle_id'])
+    detalles_por_id = {d.id: d for d in orden.detalles.select_for_update().select_related('producto')}
+    for detalle_id, cantidad in lineas:
+        detalle = detalles_por_id.get(detalle_id)
         if detalle is None:
-            raise OrdenCompraError('Una de las líneas indicadas no pertenece a esta orden.')
-        cantidad = linea['cantidad']
-        if cantidad <= 0:
-            continue
+            raise OrdenCompraError('Una de las líneas indicadas no pertenece a esta orden de compra.')
         if cantidad > detalle.cantidad_pendiente:
             raise OrdenCompraError(
-                f'No puedes recibir {cantidad} de "{detalle.producto.nombre}" -- solo quedan {detalle.cantidad_pendiente} pendientes.'
+                f'No puedes recibir {cantidad} de "{detalle.producto.nombre}" -- solo quedan {detalle.cantidad_pendiente} pendientes en la OC-{orden.numero}.'
             )
-        costo = linea.get('costo_unitario') or detalle.costo_unitario_esperado
-        detalles_para_ajuste.append({
-            'producto_id': detalle.producto_id,
-            'cantidad': cantidad,
-            'costo_unitario': costo,
-        })
         detalle.cantidad_recibida += cantidad
-        detalles_a_actualizar.append(detalle)
-
-    if not detalles_para_ajuste:
-        raise OrdenCompraError('Ninguna línea tiene cantidad recibida mayor a cero.')
-
-    ajuste = crear_y_aplicar_ajuste(
-        usuario=usuario,
-        detalles_data=detalles_para_ajuste,
-        tipo='entrada',
-        motivo=motivo,
-        proveedor_id=orden.proveedor_id,
-        almacen_id=orden.almacen_id,
-        numero_documento=numero_documento or f'OC-{orden.numero}',
-        observaciones=f'Recepción de la Orden de Compra OC-{orden.numero}',
-    )
-
-    for detalle in detalles_a_actualizar:
         detalle.save(update_fields=['cantidad_recibida'])
 
+    _actualizar_estado_recepcion(orden)
+    return detalles_por_id
+
+
+def revertir_lineas_orden_compra(orden: OrdenCompra, lineas: list[tuple[int, int]]) -> None:
+    """Deshace `recibir_lineas_orden_compra` (al anular la factura con la que llegó la mercancía)."""
+    detalles_por_id = {d.id: d for d in orden.detalles.select_for_update()}
+    for detalle_id, cantidad in lineas:
+        detalle = detalles_por_id.get(detalle_id)
+        if detalle is None:
+            continue
+        detalle.cantidad_recibida = max(detalle.cantidad_recibida - cantidad, 0)
+        detalle.save(update_fields=['cantidad_recibida'])
+    _actualizar_estado_recepcion(orden)
+
+
+def _actualizar_estado_recepcion(orden: OrdenCompra) -> None:
     # `.filter(...)` (a diferencia de `.all()`) siempre golpea la BD de
     # nuevo, sin importar que `orden` haya llegado con `detalles` ya
-    # precargado (`prefetch_related`) desde el viewset -- necesario para ver
-    # reflejadas las líneas que se acaban de guardar arriba, y también las
-    # que ya se habían completado en una recepción anterior.
-    quedan_pendientes = orden.detalles.filter(cantidad_recibida__lt=F('cantidad_pedida')).exists()
-    if not quedan_pendientes:
+    # precargado (`prefetch_related`) desde el viewset.
+    if orden.estado == 'cancelada':
+        return
+    if not orden.detalles.filter(cantidad_recibida__lt=F('cantidad_pedida')).exists():
         orden.estado = 'recibida'
-        orden.fecha_recepcion_completa = timezone.now()
-        orden.save(update_fields=['estado', 'fecha_recepcion_completa'])
-    else:
+        orden.fecha_recepcion_completa = orden.fecha_recepcion_completa or timezone.now()
+    elif orden.detalles.filter(cantidad_recibida__gt=0).exists():
         orden.estado = 'recibida_parcial'
-        orden.save(update_fields=['estado'])
-
-    return orden, ajuste
+        orden.fecha_recepcion_completa = None
+    else:
+        orden.estado = 'enviada'
+        orden.fecha_recepcion_completa = None
+    orden.save(update_fields=['estado', 'fecha_recepcion_completa'])

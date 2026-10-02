@@ -362,14 +362,31 @@ class AjusteInventario(models.Model):
         ('entrada', 'Entrada'),
         ('salida', 'Salida'),
     )
+    # Los dos motivos de compra solo los usa el sistema: la entrada que
+    # genera una `FacturaCompra` (y los ajustes históricos de antes de ese
+    # módulo). Un usuario no puede crear un ajuste con ellos -- ver
+    # `MOTIVOS_INTERNOS` y `AjusteInventarioSerializer.validate`.
     MOTIVO_CHOICES = (
         ('compra_con_factura', 'Compra con factura fiscal'),
         ('compra_sin_factura', 'Compra con nota de entrega (sin factura)'),
         ('conteo_fisico', 'Corrección por conteo físico'),
+        ('inventario_inicial', 'Inventario inicial'),
+        ('merma', 'Merma / producto dañado o vencido'),
+        ('consumo_interno', 'Consumo interno / uso propio'),
         ('devolucion_proveedor', 'Devolución a proveedor'),
-        ('merma', 'Merma / producto dañado'),
         ('otro', 'Otro'),
     )
+    MOTIVOS_COMPRA = ('compra_con_factura', 'compra_sin_factura')
+    # Motivo -> tipos en los que tiene sentido (un "inventario inicial" no
+    # puede ser una salida, ni una "merma" una entrada).
+    MOTIVOS_INTERNOS = {
+        'conteo_fisico': ('entrada', 'salida'),
+        'inventario_inicial': ('entrada',),
+        'merma': ('salida',),
+        'consumo_interno': ('salida',),
+        'devolucion_proveedor': ('salida',),
+        'otro': ('entrada', 'salida'),
+    }
     tipo = models.CharField(max_length=10, choices=TIPO_CHOICES)
     motivo = models.CharField(max_length=30, choices=MOTIVO_CHOICES, default='otro')
     almacen = models.ForeignKey(Almacen, on_delete=models.SET_NULL, blank=True, null=True)
@@ -389,7 +406,7 @@ class AjusteInventario(models.Model):
     # factura), independiente de `fecha_creacion` (cuándo se cargó al
     # sistema) -- antes no existía, así que si alguien registraba HOY una
     # compra de hace dos semanas, Cuentas por Pagar la envejecía mal (la
-    # trataba como "recién emitida", ver `crear_cuenta_por_pagar_desde_ajuste`).
+    # trataba como "recién emitida", ver `sincronizar_cuenta_por_pagar_desde_ajuste`).
     # Editable después de creado (ver `AjusteInventarioViewSet.partial_update`)
     # para poder corregirla sin tener que anular y rehacer el ajuste completo.
     fecha_documento = models.DateField(

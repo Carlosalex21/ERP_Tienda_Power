@@ -16,6 +16,7 @@ from drf_spectacular.utils import extend_schema, OpenApiParameter
 from drf_spectacular.types import OpenApiTypes
 from rest_framework import status, viewsets
 from rest_framework.decorators import action
+from rest_framework.response import Response
 
 from apps.core.permissions import IsAdminOrVendedor, IsTenantAdmin
 from apps.core.response import error_response, standard_response
@@ -35,6 +36,7 @@ from apps.facturacion.services.notas_service import (
 from apps.facturacion.services.retencion_service import (
     RetencionServiceError,
     actualizar_comprobante_retencion,
+    anular_comprobante_retencion,
     crear_comprobante_retencion,
 )
 
@@ -220,20 +222,29 @@ class LibroCompraVentaViewSet(viewsets.ModelViewSet):
 class RetencionViewSet(viewsets.ModelViewSet):
     """Gestiona los comprobantes de retención (SENIAT)."""
 
-    queryset = Retencion.objects.select_related("factura", "proveedor").filter(activo=True)
+    queryset = Retencion.objects.select_related("factura", "factura_compra", "proveedor").filter(activo=True)
     serializer_class = RetencionSerializer
+    permission_classes = [IsTenantAdmin]
 
-    def get_permissions(self):
-        if self.action == "destroy":
-            self.permission_classes = [IsTenantAdmin]
-        else:
-            self.permission_classes = [IsTenantAdmin]
-        return super().get_permissions()
+    def get_queryset(self):
+        qs = super().get_queryset()
+        factura_compra = self.request.query_params.get("factura_compra")
+        if factura_compra:
+            qs = qs.filter(factura_compra_id=factura_compra)
+        return qs
 
-    def perform_destroy(self, instance):
-        # Baja lógica -- ver el mismo comentario en NotaCreditoViewSet.
-        instance.activo = False
-        instance.save(update_fields=["activo"])
+    def destroy(self, request, *args, **kwargs):
+        # Baja lógica -- ver el mismo comentario en NotaCreditoViewSet. Si
+        # era sobre una factura de compra, la deuda con el proveedor vuelve
+        # a subir (ver `anular_comprobante_retencion`).
+        try:
+            anular_comprobante_retencion(self.get_object())
+        except RetencionServiceError as exc:
+            return error_response(
+                [{"code": "retencion_error", "detail": str(exc), "field": None}],
+                status_code=status.HTTP_400_BAD_REQUEST,
+            )
+        return Response(status=status.HTTP_204_NO_CONTENT)
 
     def perform_create(self, serializer):
         """
@@ -246,6 +257,8 @@ class RetencionViewSet(viewsets.ModelViewSet):
         data = serializer.validated_data
         comprobante = crear_comprobante_retencion(
             factura=data.get("factura"),
+            factura_compra=data.get("factura_compra"),
+            numero_comprobante=data.get("numero_comprobante"),
             proveedor=data.get("proveedor"),
             tipo_retencion=data["tipo_retencion"],
             porcentaje=data["porcentaje"],

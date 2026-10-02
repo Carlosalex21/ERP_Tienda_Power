@@ -84,6 +84,20 @@ class ConfiguracionCorrelativo(models.Model):
         default=3, verbose_name="Longitud del Número (Nota de Entrega)",
     )
 
+    # --- Comprobantes de Retención (agente de retención) ---
+    # Antes cada comprobante de retención consumía un número de la secuencia
+    # de control de FACTURAS (`current_control_number`), dejando huecos en
+    # la numeración fiscal de ventas. El SENIAT (Providencia SNAT/2015/0049)
+    # exige para el comprobante de IVA 14 dígitos: AAAA + MM + secuencial de
+    # 8 -- ver `obtener_y_actualizar_numero_retencion`. ISLR lleva su propia
+    # secuencia, con el mismo formato.
+    current_numero_retencion_iva = models.IntegerField(
+        default=0, verbose_name="Último secuencial de comprobante de retención IVA",
+    )
+    current_numero_retencion_islr = models.IntegerField(
+        default=0, verbose_name="Último secuencial de comprobante de retención ISLR",
+    )
+
     class Meta:
         db_table = 'ConfiguracionCorrelativo'
         verbose_name = "Configuración de Correlativo"

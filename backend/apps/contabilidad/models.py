@@ -112,6 +112,8 @@ class CuentaContable(models.Model):
         ('costo_venta', 'Costo de Ventas'),
         ('otros_ingresos', 'Otros Ingresos'),
         ('gasto_sueldos', 'Gasto de Sueldos y Salarios'),
+        ('retenciones_pagar', 'Retenciones por Pagar'),
+        ('capital', 'Capital Social'),
     )
 
     empresa = models.ForeignKey(EmpresaContable, on_delete=models.CASCADE, related_name='cuentas')
@@ -162,6 +164,8 @@ class AsientoContable(models.Model):
         ('venta', 'Venta del Sistema'),
         ('ajuste_inventario', 'Ajuste de Inventario'),
         ('pago_proveedor', 'Pago a Proveedor'),
+        ('compra', 'Factura de Compra'),
+        ('retencion', 'Retención a Proveedor'),
         ('nomina', 'Nómina'),
         ('cierre', 'Cierre de Ejercicio'),
     )

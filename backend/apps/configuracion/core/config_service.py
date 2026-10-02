@@ -102,6 +102,31 @@ def obtener_y_actualizar_correlativo_nota_entrega() -> str:
     return f"{config.prefijo_nota_entrega}{numero_formateado}"
 
 
+@transaction.atomic
+def obtener_y_actualizar_numero_retencion(tipo_retencion: str, fecha=None) -> str:
+    """
+    Número de comprobante de retención emitido por el negocio como agente de
+    retención -- formato SENIAT de 14 dígitos: AAAA + MM (periodo de emisión)
+    + secuencial de 8 dígitos (ej: ``20261000000001``). El secuencial es
+    propio de cada tipo (IVA / ISLR y otros) y NO comparte la numeración de
+    control de las facturas de venta.
+    """
+    from django.utils import timezone
+
+    fecha = fecha or timezone.localdate()
+    campo = "current_numero_retencion_iva" if tipo_retencion == "iva" else "current_numero_retencion_islr"
+    config, _ = ConfiguracionCorrelativo.objects.select_for_update().get_or_create(pk=1)
+
+    siguiente = getattr(config, campo) + 1
+    # La norma reinicia el secuencial al superar 99.999.999.
+    if siguiente > 99_999_999:
+        siguiente = 1
+    setattr(config, campo, siguiente)
+    config.save(update_fields=[campo])
+
+    return f"{fecha.year:04d}{fecha.month:02d}{siguiente:08d}"
+
+
 @cached(ttl=settings.CACHE_TTL.get("configuraciones", 600), key_builder=lambda: ("configuraciones_globales",))
 def obtener_configuraciones() -> Dict[str, Any]:
     """

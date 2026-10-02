@@ -220,13 +220,13 @@ def _actualizar_costo_promedio(item, cantidad_entrada, costo_unitario_entrada) -
 
 
 @transaction.atomic
-def crear_y_aplicar_ajuste(*, usuario, detalles_data, **header_fields):
+def crear_y_aplicar_ajuste(*, usuario, detalles_data, generar_asiento=True, **header_fields):
     """
     Crea un ``AjusteInventario`` (cabecera + líneas) y aplica de una vez el
-    movimiento de stock de cada línea -- pensado para el caso de "el
-    proveedor me dio una nota de entrega, no una factura" o una corrección
-    tras un conteo físico, donde varias líneas de productos entran/salen
-    juntas en un solo documento.
+    movimiento de stock de cada línea -- una corrección tras un conteo
+    físico, una merma, o la entrada de mercancía de una ``FacturaCompra``
+    (que pasa ``generar_asiento=False`` porque asienta ella misma la compra
+    completa, con su IVA y su cuenta por pagar).
 
     Todo corre en una sola transacción: si una línea falla (ej. stock
     insuficiente para una salida), NINGUNA línea queda aplicada ni se crea
@@ -284,22 +284,16 @@ def crear_y_aplicar_ajuste(*, usuario, detalles_data, **header_fields):
     # porque `apps.inventario` es compartido por todas las verticales y no
     # debe depender de que `apps.contabilidad` esté instalada, y nunca debe
     # poder tumbar un ajuste que ya se aplicó sobre el stock real.
-    try:
-        from apps.contabilidad.services import generar_asiento_automatico_ajuste_inventario
-        generar_asiento_automatico_ajuste_inventario(ajuste)
-    except Exception:
-        pass
+    if generar_asiento:
+        try:
+            from apps.contabilidad.services import generar_asiento_automatico_ajuste_inventario
+            generar_asiento_automatico_ajuste_inventario(ajuste)
+        except Exception:
+            pass
 
-    # Cuenta por pagar automática -- mismo criterio: OPCIONAL y aislado, solo
-    # actúa si es una compra con proveedor y costo conocido (ver
-    # `crear_cuenta_por_pagar_desde_ajuste`), nunca puede tumbar el ajuste
-    # que ya se aplicó sobre el stock real.
-    try:
-        from apps.proveedores.core.proveedores_service import crear_cuenta_por_pagar_desde_ajuste
-        crear_cuenta_por_pagar_desde_ajuste(ajuste)
-    except Exception:
-        pass
-
+    # La cuenta por pagar de una compra ya no nace del ajuste sino de la
+    # `FacturaCompra` (ver `facturas_compra_service`): antes se creaba aquí
+    # para todo ajuste con motivo "compra", sin base ni IVA.
     return ajuste
 
 

@@ -39,13 +39,33 @@ class AjusteInventarioDetalleWriteSerializer(serializers.ModelSerializer):
             raise serializers.ValidationError("La cantidad debe ser mayor a 0.")
         return value
 
+    def validate(self, attrs):
+        variante = attrs.get('variante')
+        if variante is not None and variante.producto_id != attrs['producto'].pk:
+            raise serializers.ValidationError({'variante': 'La variante no pertenece al producto indicado.'})
+        return attrs
+
+
+def error_motivo_ajuste(motivo, tipo) -> str | None:
+    """Un ajuste solo registra movimientos internos -- las compras van por Facturas de Compra."""
+    if motivo in AjusteInventario.MOTIVOS_COMPRA:
+        return ('Las compras a proveedores se registran en Compras > Facturas de compra '
+                '(así quedan en el Libro de Compras y en Cuentas por Pagar).')
+    tipos_validos = AjusteInventario.MOTIVOS_INTERNOS.get(motivo)
+    if tipos_validos is None:
+        return 'Motivo de ajuste inválido.'
+    if tipo and tipo not in tipos_validos:
+        return f'"{dict(AjusteInventario.MOTIVO_CHOICES)[motivo]}" no aplica a una {tipo}.'
+    return None
+
 
 class AjusteInventarioSerializer(serializers.ModelSerializer):
     """
-    Ajuste de entrada/salida de inventario (cabecera + líneas), para el caso
-    de mercancía recibida con nota de entrega (sin factura) o correcciones
-    de conteo físico. Al crearse, aplica de inmediato el movimiento de stock
-    de cada línea (ver ``crear_y_aplicar_ajuste``) -- no queda "pendiente".
+    Ajuste de entrada/salida de inventario por un motivo INTERNO (conteo
+    físico, merma, consumo propio, inventario inicial...). Al crearse,
+    aplica de inmediato el movimiento de stock de cada línea (ver
+    ``crear_y_aplicar_ajuste``) -- no queda "pendiente". Las compras a
+    proveedores ya no pasan por aquí: ver ``FacturaCompra``.
     """
     detalles = AjusteInventarioDetalleSerializer(many=True, read_only=True)
     detalles_para_crear = AjusteInventarioDetalleWriteSerializer(
@@ -63,7 +83,9 @@ class AjusteInventarioSerializer(serializers.ModelSerializer):
             'usuario_nombre', 'fecha_creacion', 'fecha_documento', 'activo',
             'detalles', 'detalles_para_crear',
         )
-        read_only_fields = ('usuario', 'fecha_creacion')
+        # `numero_control` (de la factura de un proveedor) queda solo para
+        # leer ajustes históricos; los nuevos no lo usan.
+        read_only_fields = ('usuario', 'fecha_creacion', 'numero_control')
 
     def validate_detalles(self, value):
         if not value:
@@ -71,20 +93,29 @@ class AjusteInventarioSerializer(serializers.ModelSerializer):
         return value
 
     def validate(self, attrs):
+        error = error_motivo_ajuste(attrs.get('motivo', 'otro'), attrs.get('tipo'))
+        if error:
+            raise serializers.ValidationError({'motivo': error})
+        if attrs.get('motivo') != 'devolucion_proveedor':
+            attrs['proveedor'] = None
+
         # Una ENTRADA sin costo deja el costo promedio del producto sin
-        # actualizar (ver `stock_service._actualizar_costo_promedio`) --
-        # silenciosamente, sin que nadie lo note hasta que el valor de
-        # inventario del dashboard salga mal. Se exige acá, al momento de
-        # cargar la mercancía, en vez de dejarlo "opcional" y confiar en que
-        # alguien lo complete después.
+        # actualizar (ver `stock_service._actualizar_costo_promedio`) y el
+        # asiento sin valor. Si la línea no lo trae, se valora al costo
+        # promedio que ya tiene el producto (lo correcto para un conteo
+        # físico al alza: no cambia el promedio); solo si el producto todavía
+        # no tiene costo se le exige al usuario.
         if attrs.get('tipo') == 'entrada':
-            sin_costo = [
-                d for d in attrs.get('detalles', [])
-                if not d.get('costo_unitario') or d['costo_unitario'] <= 0
-            ]
-            if sin_costo:
+            for d in attrs.get('detalles', []):
+                if d.get('costo_unitario') and d['costo_unitario'] > 0:
+                    continue
+                item = d.get('variante') or d['producto']
+                costo_actual = getattr(item, 'costo_promedio', None)
+                if attrs.get('motivo') != 'inventario_inicial' and costo_actual and costo_actual > 0:
+                    d['costo_unitario'] = costo_actual
+                    continue
                 raise serializers.ValidationError({
-                    'detalles': 'Toda línea de una entrada debe traer el costo unitario de compra (mayor a 0).',
+                    'detalles': f'Indica el costo unitario de "{item}" -- todavía no tiene un costo registrado.',
                 })
         return attrs
 
@@ -112,3 +143,16 @@ class AjusteInventarioEditSerializer(serializers.ModelSerializer):
     class Meta:
         model = AjusteInventario
         fields = ('motivo', 'proveedor', 'numero_documento', 'numero_control', 'fecha_documento', 'observaciones')
+
+    def validate_motivo(self, value):
+        # Un ajuste histórico de compra conserva su motivo, pero ningún
+        # ajuste puede pasar a ser "compra" (ni dejar de serlo) editándolo.
+        actual = self.instance.motivo if self.instance else None
+        if value == actual:
+            return value
+        if actual in AjusteInventario.MOTIVOS_COMPRA:
+            raise serializers.ValidationError('El motivo de una compra registrada no se puede cambiar.')
+        error = error_motivo_ajuste(value, self.instance.tipo if self.instance else None)
+        if error:
+            raise serializers.ValidationError(error)
+        return value

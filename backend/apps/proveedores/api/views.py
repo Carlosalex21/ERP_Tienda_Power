@@ -1,22 +1,27 @@
 # apps/proveedores/api/views.py
-from rest_framework import viewsets, status
+from rest_framework import serializers, viewsets, status
 from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.views import APIView
 
-from apps.core.permissions import IsAdminOrVendedor, IsAdminOrAlmacenista
-from apps.proveedores.models import Proveedor, CuentaPorPagar, OrdenCompra
+from apps.core.permissions import IsAdminOrVendedor, IsAdminOrAlmacenista, ROL_ADMIN, codigo_rol
+from apps.facturacion.services.retencion_service import RetencionServiceError
+from apps.inventario.api.almacen_operativo import resolver_almacen_operativo
+from apps.proveedores.models import Proveedor, CuentaPorPagar, OrdenCompra, FacturaCompra
 from apps.proveedores.api.serializers import (
     ProveedorSerializer, CuentaPorPagarSerializer, RegistrarPagoProveedorSerializer,
-    OrdenCompraSerializer, CrearOrdenCompraSerializer, RegistrarRecepcionSerializer,
+    OrdenCompraSerializer, CrearOrdenCompraSerializer, FacturaCompraSerializer, CrearFacturaCompraSerializer,
 )
 from apps.proveedores.core.proveedores_service import (
     desactivar_proveedor_service, registrar_pago_proveedor, reporte_cuentas_por_pagar,
     CuentaPorPagarError,
 )
 from apps.proveedores.core.compras_service import (
-    crear_orden_compra, enviar_orden_compra, cancelar_orden_compra, registrar_recepcion_orden_compra,
+    crear_orden_compra, enviar_orden_compra, cancelar_orden_compra,
     OrdenCompraError,
+)
+from apps.proveedores.core.facturas_compra_service import (
+    FacturaCompraError, anular_factura_compra, registrar_factura_compra,
 )
 
 class ProveedorViewSet(viewsets.ModelViewSet):
@@ -52,11 +57,11 @@ class ProveedorViewSet(viewsets.ModelViewSet):
 
 class CuentaPorPagarViewSet(viewsets.ModelViewSet):
     """
-    Cuentas por pagar a proveedores -- se crean solas desde una compra con
-    proveedor (ver `stock_service.crear_y_aplicar_ajuste`), no se crean a
-    mano; de solo lectura + la acción `registrar-pago` para abonarlas.
+    Cuentas por pagar a proveedores -- se crean solas al registrar una
+    factura de compra (ver `facturas_compra_service`), no se crean a mano;
+    de solo lectura + la acción `registrar-pago` para abonarlas.
     """
-    queryset = CuentaPorPagar.objects.select_related('proveedor').prefetch_related('pagos')
+    queryset = CuentaPorPagar.objects.select_related('proveedor', 'factura_compra').prefetch_related('pagos')
     serializer_class = CuentaPorPagarSerializer
     permission_classes = [IsAdminOrAlmacenista]
     http_method_names = ['get', 'head', 'options', 'post']
@@ -103,11 +108,10 @@ class ReporteCuentasPorPagarView(APIView):
 class OrdenCompraViewSet(viewsets.ModelViewSet):
     """
     Órdenes de compra a proveedores: se crean en borrador, se marcan
-    enviadas, y se reciben (total o parcialmente) línea por línea -- cada
-    recepción real aplica una entrada de inventario de siempre (ver
-    `compras_service.registrar_recepcion_orden_compra`), así que no hace
-    falta editar/borrar una orden ya enviada: se recibe, se cancela si nada
-    llegó, o se recibe parcial y se corrige a mano si algo salió mal.
+    enviadas, y se reciben (total o parcialmente) registrando la factura de
+    compra con la que llega la mercancía (`FacturaCompraViewSet` con
+    `orden_compra_id`) -- no hace falta editar/borrar una orden ya enviada:
+    se recibe, se cancela si nada llegó, o queda parcial.
     """
     queryset = OrdenCompra.objects.select_related('proveedor', 'almacen', 'usuario').prefetch_related('detalles__producto')
     serializer_class = OrdenCompraSerializer
@@ -164,23 +168,71 @@ class OrdenCompraViewSet(viewsets.ModelViewSet):
             return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
         return Response(self.get_serializer(orden).data)
 
-    @action(detail=True, methods=['post'])
-    def recibir(self, request, pk=None):
-        orden = self.get_object()
-        serializer = RegistrarRecepcionSerializer(data=request.data)
+
+
+class FacturaCompraViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    Compras a proveedores (factura fiscal o nota de entrega). Crear una
+    mueve inventario, crea la cuenta por pagar, la asienta y la registra en
+    el Libro de Compras (ver `facturas_compra_service`). No se editan: si se
+    cargó mal, se anula (`anular`) y se vuelve a cargar.
+    """
+    serializer_class = FacturaCompraSerializer
+    permission_classes = [IsAdminOrAlmacenista]
+
+    def get_queryset(self):
+        qs = FacturaCompra.objects.select_related(
+            'proveedor', 'almacen', 'orden_compra', 'usuario',
+        ).prefetch_related('detalles__producto', 'detalles__variante', 'cuentas_por_pagar')
+        params = self.request.query_params
+        if params.get('proveedor'):
+            qs = qs.filter(proveedor_id=params['proveedor'])
+        if params.get('estado'):
+            qs = qs.filter(estado=params['estado'])
+        if params.get('tipo_documento'):
+            qs = qs.filter(tipo_documento=params['tipo_documento'])
+        if params.get('fecha_desde'):
+            qs = qs.filter(fecha_emision__gte=params['fecha_desde'])
+        if params.get('fecha_hasta'):
+            qs = qs.filter(fecha_emision__lte=params['fecha_hasta'])
+        return qs
+
+    def create(self, request, *args, **kwargs):
+        serializer = CrearFacturaCompraSerializer(data=request.data)
         serializer.is_valid(raise_exception=True)
         data = serializer.validated_data
-        try:
-            registrar_recepcion_orden_compra(
-                orden=orden,
-                numero_documento=data.get('numero_documento', ''),
-                usuario=request.user,
-                lineas_recibidas=[
-                    {'detalle_id': l['detalle_id'], 'cantidad': l['cantidad'], 'costo_unitario': l.get('costo_unitario')}
-                    for l in data['lineas']
-                ],
+        almacen = data['almacen']
+        if data['detalles']:
+            almacen = resolver_almacen_operativo(
+                request.user, almacen or (data['orden_compra'].almacen if data['orden_compra'] else None),
             )
-        except OrdenCompraError as exc:
-            return Response({"error": str(exc)}, status=status.HTTP_400_BAD_REQUEST)
-        orden.refresh_from_db()
-        return Response(self.get_serializer(orden).data)
+        try:
+            factura = registrar_factura_compra(
+                usuario=request.user,
+                proveedor=data['proveedor'],
+                tipo_documento=data['tipo_documento'],
+                numero_factura=data['numero_factura'],
+                numero_control=data['numero_control'],
+                fecha_emision=data['fecha_emision'],
+                almacen=almacen,
+                orden_compra=data['orden_compra'],
+                detalles=data['detalles'],
+                monto_exento=data['monto_exento'],
+                base_imponible=data['base_imponible'],
+                porcentaje_iva=data['porcentaje_iva'],
+                porcentaje_retencion_iva=data['porcentaje_retencion_iva'],
+                observaciones=data['observaciones'],
+            )
+        except (FacturaCompraError, RetencionServiceError) as exc:
+            raise serializers.ValidationError({'detail': str(exc)})
+        return Response(self.get_serializer(self.get_queryset().get(pk=factura.pk)).data, status=status.HTTP_201_CREATED)
+
+    @action(detail=True, methods=['post'])
+    def anular(self, request, pk=None):
+        if codigo_rol(getattr(getattr(request.user, 'metadata', None), 'rol', None)) != ROL_ADMIN:
+            return Response({"error": "Solo un administrador puede anular una compra."}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            anular_factura_compra(self.get_object(), usuario=request.user)
+        except FacturaCompraError as exc:
+            raise serializers.ValidationError({'detail': str(exc)})
+        return Response(self.get_serializer(self.get_queryset().get(pk=pk)).data)

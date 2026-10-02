@@ -45,58 +45,11 @@ class CuentaPorPagarError(Exception):
     """Error controlado al crear/pagar una cuenta por pagar."""
 
 
-def crear_cuenta_por_pagar_desde_ajuste(ajuste) -> CuentaPorPagar | None:
-    """
-    Se llama DESPUÉS de que un `AjusteInventario` de entrada ya se aplicó
-    sobre el stock real (ver `stock_service.crear_y_aplicar_ajuste`) --
-    mismo criterio defensivo que los asientos automáticos de contabilidad:
-    nunca debe poder tumbar el ajuste ya aplicado.
-
-    Solo crea la cuenta si el ajuste es una COMPRA (con o sin factura
-    fiscal), tiene un proveedor asociado, y al menos una línea trae
-    `costo_unitario` (sin costo no hay monto que cobrar/deber). Si ya existe
-    una cuenta para este ajuste (reintento), no duplica.
-    """
-    try:
-        if ajuste.tipo != 'entrada' or ajuste.motivo not in ('compra_con_factura', 'compra_sin_factura'):
-            return None
-        if not ajuste.proveedor_id:
-            return None
-        if CuentaPorPagar.objects.filter(ajuste_origen=ajuste).exists():
-            return None
-
-        monto = Decimal('0.00')
-        for detalle in ajuste.detalles.all():
-            if detalle.costo_unitario:
-                monto += Decimal(detalle.cantidad) * Decimal(detalle.costo_unitario)
-        monto = _round(monto)
-        if monto <= 0:
-            return None
-
-        fecha_emision = ajuste.fecha_efectiva
-        fecha_vencimiento = None
-        if ajuste.proveedor.plazo_pago:
-            fecha_vencimiento = fecha_emision + timedelta(days=ajuste.proveedor.plazo_pago)
-
-        return CuentaPorPagar.objects.create(
-            proveedor=ajuste.proveedor,
-            numero_documento=ajuste.numero_documento or '',
-            fecha_emision=fecha_emision,
-            fecha_vencimiento=fecha_vencimiento,
-            monto=monto,
-            ajuste_origen=ajuste,
-            usuario=ajuste.usuario,
-        )
-    except Exception:
-        import logging
-        logging.getLogger(__name__).warning('No se pudo crear la cuenta por pagar del ajuste %s', getattr(ajuste, 'id', '?'), exc_info=True)
-        return None
-
-
 def sincronizar_cuenta_por_pagar_desde_ajuste(ajuste) -> None:
     """
-    Si el `ajuste` ya generó una `CuentaPorPagar` (ver
-    `crear_cuenta_por_pagar_desde_ajuste`) y luego se corrige su fecha de
+    Si el `ajuste` generó una `CuentaPorPagar` (solo ajustes históricos con
+    motivo "compra", de antes del módulo de Facturas de Compra) y luego se
+    corrige su fecha de
     documento o su proveedor, la cuenta ya creada queda con datos viejos --
     esto la pone al día. Se llama desde
     `AjusteInventarioViewSet.partial_update` cada vez que se edita un ajuste

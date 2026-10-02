@@ -50,6 +50,7 @@ MODULOS_COMERCIALES: tuple[ModuloComercial, ...] = (
     ModuloComercial("importar_productos", ("inventario/productos/bulk-upload/",)),
     # Compras
     ModuloComercial("proveedores", ("proveedores/proveedores/",)),
+    ModuloComercial("facturas_compra", ("proveedores/facturas-compra/",)),
     ModuloComercial("ordenes_compra", ("proveedores/ordenes-compra/",)),
     ModuloComercial("cuentas_por_pagar", ("proveedores/cuentas-por-pagar/", "proveedores/reportes/cuentas-por-pagar/")),
     # Finanzas

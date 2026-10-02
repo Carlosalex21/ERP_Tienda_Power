@@ -380,9 +380,11 @@ class RetencionSerializer(serializers.ModelSerializer):
     """
     Serializer del comprobante de retención (SENIAT).
 
-    El cliente envía ``factura``/``proveedor``, ``tipo_retencion``,
-    ``porcentaje`` y ``base``. El ``monto`` lo calcula
-    ``crear_comprobante_retencion`` a partir de base y porcentaje.
+    El cliente envía ``factura_compra``/``proveedor`` (retención emitida) o
+    ``factura`` (retención recibida de un cliente, con su
+    ``numero_comprobante``), ``tipo_retencion``, ``porcentaje`` y ``base``.
+    El ``monto`` lo calcula ``crear_comprobante_retencion``; el número de
+    una retención emitida lo genera el sistema (ignora el que se envíe).
     """
 
     # Con factura asociada, `base` la fija el backend desde la factura (IVA
@@ -391,8 +393,13 @@ class RetencionSerializer(serializers.ModelSerializer):
     # factura es lo que el usuario tipeó. Se expone la moneda para que el
     # frontend pueda etiquetarla honestamente en vez de asumir una fija.
     factura_moneda_codigo = serializers.CharField(source="factura.moneda_codigo", read_only=True, default=None)
+    factura_correlativo = serializers.CharField(source="factura.correlativo", read_only=True, default=None)
+    factura_compra_numero = serializers.CharField(source="factura_compra.numero_factura", read_only=True, default=None)
+    proveedor_nombre = serializers.CharField(source="proveedor.nombre", read_only=True, default=None)
+    proveedor_rif = serializers.CharField(source="proveedor.identificador_fiscal", read_only=True, default=None)
 
     class Meta:
         model = Retencion
         fields = "__all__"
-        read_only_fields = ("fecha_emision", "numero_comprobante", "monto")
+        read_only_fields = ("fecha_emision", "monto", "asiento", "activo")
+        extra_kwargs = {"numero_comprobante": {"required": False, "allow_null": True, "allow_blank": True}}

@@ -627,6 +627,12 @@ class LibroCompraVenta(models.Model):
     iva = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="IVA")
     retencion = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Retención")
     total = models.DecimalField(max_digits=10, decimal_places=2, default=0, verbose_name="Total")
+    # Línea del Libro de Compras: se identifica por la factura del proveedor,
+    # no por su número -- dos proveedores distintos pueden tener la misma
+    # numeración ("000123"), así que el número solo no sirve de llave.
+    factura_compra = models.ForeignKey(
+        "proveedores.FacturaCompra", on_delete=models.SET_NULL, null=True, blank=True, related_name="lineas_libro",
+    )
     activo = models.BooleanField(default=True, verbose_name="Activo")
 
     class Meta:
@@ -645,10 +651,15 @@ class LibroCompraVenta(models.Model):
 
 class Retencion(models.Model):
     """
-    Comprobante de retención (ISLR, IVA) emitido conforme al SENIAT.
+    Comprobante de retención (ISLR, IVA) conforme al SENIAT.
 
-    Registra el comprobante de retención asociado a una factura de compra,
-    sirviendo de soporte para el crédito fiscal del contribuyente.
+    Dos sentidos posibles:
+    - EMITIDA por el negocio como agente de retención, sobre una factura de
+      compra (`factura_compra`) o directamente a un proveedor: el número de
+      comprobante lo genera el sistema (formato AAAAMM + secuencial de 8).
+    - RECIBIDA de un cliente que le retuvo al negocio sobre una factura de
+      venta (`factura`): el número es el del comprobante que entregó el
+      cliente y se carga a mano.
     """
     TIPO_RETENCION_CHOICES = (
         ('islr', 'ISLR'),
@@ -671,6 +682,14 @@ class Retencion(models.Model):
         related_name="retenciones",
         verbose_name="Proveedor",
     )
+    factura_compra = models.ForeignKey(
+        "proveedores.FacturaCompra",
+        on_delete=models.SET_NULL,
+        blank=True,
+        null=True,
+        related_name="retenciones",
+        verbose_name="Factura de Compra",
+    )
     tipo_retencion = models.CharField(max_length=10, choices=TIPO_RETENCION_CHOICES, verbose_name="Tipo de Retención")
     numero_comprobante = models.CharField(max_length=50, blank=True, null=True, verbose_name="Número de Comprobante")
     porcentaje = models.DecimalField(max_digits=5, decimal_places=2, verbose_name="Porcentaje (%)")
@@ -685,6 +704,12 @@ class Retencion(models.Model):
         help_text="Periodo fiscal que declara el proveedor (ej: 2026, 01/2026).",
     )
     fecha_emision = models.DateField(auto_now_add=True, verbose_name="Fecha de Emisión")
+    # Asiento (Debe Cuentas por Pagar / Haber Retenciones por Pagar) de una
+    # retención emitida sobre una factura de compra -- se anula si se anula
+    # la retención.
+    asiento = models.ForeignKey(
+        "contabilidad.AsientoContable", on_delete=models.SET_NULL, null=True, blank=True, related_name="+",
+    )
     activo = models.BooleanField(default=True, verbose_name="Activo")
 
     class Meta:
