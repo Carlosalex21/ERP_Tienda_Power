@@ -112,6 +112,9 @@ REST_FRAMEWORK = {
         # sin esto, un cajero (usuario ya autenticado, no un anónimo) podría
         # probar miles de PINes por minuto hasta acertar.
         'pin_autorizacion': os.getenv('THROTTLE_PIN_AUTORIZACION', '10/min'),
+        # Portal público de inmuebles: consultas de interesados (anti spam) y portal del condómino.
+        'inmuebles_consulta': os.getenv('THROTTLE_INMUEBLES_CONSULTA', '10/min'),
+        'inmuebles_portal': os.getenv('THROTTLE_INMUEBLES_PORTAL', '60/min'),
     },
 }
 

@@ -39,7 +39,7 @@ class DomainForClientSerializer(serializers.ModelSerializer):
 class PlanForClientSerializer(serializers.ModelSerializer):
     class Meta:
         model = Plan
-        fields = ('id', 'nombre', 'slug', 'precio', 'limite_usuarios', 'limite_sucursales', 'limite_productos')
+        fields = ('id', 'nombre', 'slug', 'precio', 'limite_usuarios', 'limite_sucursales', 'limite_productos', 'limite_unidades')
 
 class SubscriptionForClientSerializer(serializers.ModelSerializer):
     plan = PlanForClientSerializer(read_only=True)
@@ -113,6 +113,8 @@ class TenantRegistrationSerializer(serializers.Serializer):
             ('farmacia', 'Farmacia'),
             ('servicios', 'Taller / Servicios'),
             ('contador', 'Contador / Firma Contable'),
+            ('condominios', 'Administradora de Condominios'),
+            ('inmobiliaria', 'Inmobiliaria'),
         ],
         required=True,
         help_text="Define el modelo de negocio principal del tenant.",

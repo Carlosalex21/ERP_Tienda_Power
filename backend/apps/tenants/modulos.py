@@ -71,6 +71,19 @@ MODULOS_COMERCIALES: tuple[ModuloComercial, ...] = (
     ModuloComercial("notas_credito", ("facturacion/notas-credito/",)),
     ModuloComercial("notas_debito", ("facturacion/notas-debito/",)),
     ModuloComercial("retenciones", ("facturacion/retenciones/",)),
+    # Condominios e inmobiliaria. `unidades` y `propiedades` son el mismo recurso
+    # con dos nombres: así cada módulo se vende (y se bloquea) por separado.
+    ModuloComercial("edificios", ("inmuebles/edificios/",)),
+    ModuloComercial("unidades", ("inmuebles/unidades/",)),
+    ModuloComercial("gastos_comunes", ("inmuebles/gastos-comunes/",)),
+    ModuloComercial("periodos_condominio", ("inmuebles/periodos-condominio/",)),
+    ModuloComercial("propiedades", ("inmuebles/propiedades/",)),
+    ModuloComercial("contratos", ("inmuebles/contratos/",)),
+    ModuloComercial("liquidaciones", ("inmuebles/liquidaciones/", "inmuebles/gastos-propiedad/")),
+    ModuloComercial("consultas_inmuebles", ("inmuebles/consultas/",)),
+    ModuloComercial("cobranza", ("inmuebles/cargos/", "inmuebles/recibos/", "inmuebles/portal-accesos/", "inmuebles/medios-pago/")),
+    ModuloComercial("pagos_reportados", ("inmuebles/pagos-reportados/",)),
+    ModuloComercial("morosidad", ("inmuebles/reportes/",)),
     # Recursos humanos
     ModuloComercial("empleados"),
     ModuloComercial("departamentos"),

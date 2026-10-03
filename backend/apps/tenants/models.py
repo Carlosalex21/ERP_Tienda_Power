@@ -43,6 +43,10 @@ class Plan(models.Model):
         null=True, blank=True,
         help_text="Máximo de productos activos que puede tener el tenant. Vacío = sin límite.",
     )
+    limite_unidades = models.PositiveIntegerField(
+        null=True, blank=True,
+        help_text="Máximo de unidades/propiedades activas (condominios e inmobiliaria). Vacío = sin límite.",
+    )
     descripcion = models.TextField(blank=True, default='')
     activo = models.BooleanField(default=True)
     # A qué tipos de negocio se le ofrece/cobra este plan (ver
@@ -101,6 +105,8 @@ class Client(TenantMixin):
         ('farmacia', 'Farmacia'),
         ('servicios', 'Taller / Servicios'),
         ('contador', 'Contador / Firma Contable'),
+        ('condominios', 'Administradora de Condominios'),
+        ('inmobiliaria', 'Inmobiliaria'),
     )
     # Países soportados por el motor fiscal (ver apps.configuracion.core.tax_strategy).
     # Se duplica aquí como constante simple en vez de importar el registro de

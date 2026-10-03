@@ -191,7 +191,7 @@ class TenantService:
             last_name: Apellido.
             nombre_empresa: Nombre de la empresa.
             subdomain: Subdominio único (schema_name y dominio).
-            tipo_negocio: 'retail' | 'b2b' | 'restaurante' | 'farmacia' | 'servicios'.
+            tipo_negocio: 'retail' | 'b2b' | 'restaurante' | 'farmacia' | 'servicios' | 'contador' | 'condominios' | 'inmobiliaria'.
             pais_codigo: País de operación ('VE' | 'CO' | 'PE'), elegido como
                 primer paso del registro. Condiciona la moneda base y las
                 tasas de IVA/IGV sembradas para el tenant.

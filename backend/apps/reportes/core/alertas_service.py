@@ -205,6 +205,11 @@ def _alertas_garantias_por_vencer() -> list[dict]:
     return alertas
 
 
+def _alertas_inmuebles() -> list[dict]:
+    from apps.inmuebles.services.alertas import alertas_inmuebles
+    return alertas_inmuebles()
+
+
 def obtener_alertas(almacen_ids=None) -> dict:
     """
     `almacen_ids`: filtra solo las alertas de "bajo stock" a esas
@@ -220,7 +225,7 @@ def obtener_alertas(almacen_ids=None) -> dict:
     for fuente in (
         _alertas_cuentas_por_cobrar, _alertas_cuentas_por_pagar, _bajo_stock,
         _alertas_lotes_por_vencer, _alertas_seguimientos_comerciales, _alertas_reclamos_postventa,
-        _alertas_garantias_por_vencer,
+        _alertas_garantias_por_vencer, _alertas_inmuebles,
     ):
         try:
             alertas.extend(fuente())
