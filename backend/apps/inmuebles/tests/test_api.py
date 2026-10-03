@@ -68,6 +68,15 @@ class PanelApiTests(ApiBase):
         codigos = [u['codigo'] for u in self.datos(self.api.get(f'{BASE}/unidades/'))]
         self.assertIn('Casa 1', codigos)
 
+    def test_propiedad_suelta_se_crea_sin_enviar_edificio(self):
+        # Lo que manda el formulario de la inmobiliaria: no incluye `edificio`.
+        datos = {'codigo': 'CASA-014', 'titulo': 'Casa', 'tipo': 'casa', 'estado': 'disponible', 'operacion': 'alquiler', 'canon_usd': '450',
+                 'habitaciones': 2, 'banos': 1, 'amenidades': [], 'publicada': False}
+        self.assertEqual(self.api.post(f'{BASE}/propiedades/', datos, format='json').status_code, 201)
+        r = self.api.post(f'{BASE}/propiedades/', datos, format='json')
+        self.assertEqual(r.status_code, 400)
+        self.assertIn('Ya existe una unidad', self.errores(r)[0]['detail'])
+
     def test_codigo_de_unidad_duplicado_da_un_error_legible(self):
         r = self.api.post(f'{BASE}/unidades/', {'edificio': self.edificio.pk, 'codigo': 'a-1', 'alicuota': 1}, format='json')
         self.assertEqual(r.status_code, 400)

@@ -50,6 +50,10 @@ class UnidadSerializer(serializers.ModelSerializer):
     class Meta:
         model = Unidad
         fields = '__all__'
+        # La unicidad (edificio + código) se valida a mano en `validate`: el validador automático de DRF
+        # volvería obligatorio el edificio y una propiedad suelta de inmobiliaria no tiene.
+        validators = []
+        extra_kwargs = {'edificio': {'required': False, 'allow_null': True}}
 
     def _pendientes(self, obj):
         # `cargos_pendientes` lo precarga el viewset (evita una consulta por unidad).
