@@ -81,7 +81,8 @@ MODULOS_COMERCIALES: tuple[ModuloComercial, ...] = (
     ModuloComercial("contratos", ("inmuebles/contratos/",)),
     ModuloComercial("liquidaciones", ("inmuebles/liquidaciones/", "inmuebles/gastos-propiedad/")),
     ModuloComercial("consultas_inmuebles", ("inmuebles/consultas/",)),
-    ModuloComercial("cobranza", ("inmuebles/cargos/", "inmuebles/recibos/", "inmuebles/portal-accesos/", "inmuebles/medios-pago/")),
+    ModuloComercial("cobranza", ("inmuebles/cargos/", "inmuebles/recibos/", "inmuebles/portal-accesos/")),
+    ModuloComercial("medios_cobro", ("inmuebles/medios-pago/",)),
     ModuloComercial("pagos_reportados", ("inmuebles/pagos-reportados/",)),
     ModuloComercial("morosidad", ("inmuebles/reportes/",)),
     # Recursos humanos
