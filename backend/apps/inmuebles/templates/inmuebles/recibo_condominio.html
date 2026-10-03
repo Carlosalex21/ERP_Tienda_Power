@@ -1,0 +1,46 @@
+{% extends "inmuebles/base_pdf.html" %}
+{% block contenido %}
+  <div class="titulo">Recibo de condominio</div>
+  <div class="subtitulo">{{ periodo.edificio.nombre }} · {{ periodo.periodo }}</div>
+  <div class="linea"></div>
+
+  <table class="datos">
+    <tr><td class="muted" width="22%">Unidad</td><td class="bold">{{ cargo.unidad.codigo }}</td>
+        <td class="muted" width="22%">Emitido</td><td>{{ periodo.fecha_emision|date:"d/m/Y" }}</td></tr>
+    <tr><td class="muted">Propietario</td><td>{{ responsable|default:"—" }}</td>
+        <td class="muted">Vence</td><td class="bold">{{ cargo.fecha_vencimiento|date:"d/m/Y" }}</td></tr>
+    <tr><td class="muted">Alícuota</td><td>{{ cargo.unidad.alicuota|floatformat:4 }} %</td><td></td><td></td></tr>
+  </table>
+
+  <div class="seccion">Gastos comunes del mes</div>
+  <table>
+    <tr><th>Categoría</th><th class="right">Monto (USD)</th></tr>
+    {% for g in gastos %}
+    <tr><td>{{ g.nombre }}</td><td class="right">{{ g.total|floatformat:2 }}</td></tr>
+    {% endfor %}
+    {% if periodo.fondo_reserva_usd > 0 %}
+    <tr><td>Fondo de reserva</td><td class="right">{{ periodo.fondo_reserva_usd|floatformat:2 }}</td></tr>
+    {% endif %}
+    <tr class="bold"><td>Total a repartir entre las unidades</td><td class="right">{{ periodo.total_distribuido_usd|floatformat:2 }}</td></tr>
+  </table>
+
+  <table class="total" style="margin-top:10px;">
+    <tr><td>Cuota de la unidad ({{ cargo.unidad.alicuota|floatformat:4 }} %)</td><td class="right">$ {{ cargo.monto_usd|floatformat:2 }}</td></tr>
+  </table>
+  <table class="datos" style="margin-top:6px;">
+    <tr><td class="muted">Pagado</td><td class="right ok">$ {{ cargo.monto_pagado_usd|floatformat:2 }}</td></tr>
+    <tr><td class="bold">Saldo de esta cuota</td><td class="right bold">$ {{ saldo|floatformat:2 }}</td></tr>
+    {% if tasa %}<tr><td class="muted small">Equivalente en {{ tasa.moneda }} (tasa {{ tasa.valor }})</td><td class="right small">{{ equivalente|floatformat:2 }} {{ tasa.moneda }}</td></tr>{% endif %}
+  </table>
+
+  {% if medios %}
+  <div class="seccion">Datos para pagar</div>
+  <table>
+    {% for m in medios %}
+    <tr><td><b>{{ m.get_tipo_display }}</b>{% if m.banco %} · {{ m.banco }}{% endif %}<br/>
+        <span class="small">{{ m.numero_cuenta }}{% if m.titular %} — {{ m.titular }}{% endif %}{% if m.documento_titular %} ({{ m.documento_titular }}){% endif %}</span>
+        {% if m.instrucciones %}<br/><span class="small muted">{{ m.instrucciones }}</span>{% endif %}</td></tr>
+    {% endfor %}
+  </table>
+  {% endif %}
+{% endblock %}

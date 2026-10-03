@@ -1,0 +1,32 @@
+{% extends "inmuebles/base_pdf.html" %}
+{% block contenido %}
+  <div class="titulo">Liquidación al propietario</div>
+  <div class="subtitulo">{{ liquidacion.periodo }} · N° {{ liquidacion.pk }}</div>
+  {% if liquidacion.estado == "anulada" %}<div class="anulado">ANULADA</div>{% endif %}
+  <div class="linea"></div>
+
+  <table class="datos">
+    <tr><td class="muted" width="22%">Propietario</td><td class="bold">{{ liquidacion.propietario.nombre }}</td>
+        <td class="muted" width="22%">Estado</td><td>{{ liquidacion.get_estado_display }}</td></tr>
+    <tr><td class="muted">Documento</td><td>{{ liquidacion.propietario.documento|default:"—" }}</td>
+        <td class="muted">Pagada</td><td>{% if liquidacion.fecha_pago %}{{ liquidacion.fecha_pago|date:"d/m/Y" }}{% else %}—{% endif %}</td></tr>
+    {% if liquidacion.referencia_pago %}<tr><td class="muted">Referencia</td><td>{{ liquidacion.referencia_pago }}</td><td></td><td></td></tr>{% endif %}
+  </table>
+
+  <div class="seccion">Detalle</div>
+  <table>
+    <tr><th>Concepto</th><th class="right">Monto (USD)</th></tr>
+    {% for l in lineas %}
+    <tr><td>{{ l.descripcion }}</td><td class="right {% if l.monto_usd < 0 %}mal{% else %}ok{% endif %}">{{ l.monto_usd|floatformat:2 }}</td></tr>
+    {% endfor %}
+  </table>
+
+  <table class="datos" style="margin-top:8px;">
+    <tr><td>Total cobrado</td><td class="right">$ {{ liquidacion.total_cobrado_usd|floatformat:2 }}</td></tr>
+    <tr><td>Honorarios de administración</td><td class="right mal">- $ {{ liquidacion.honorario_usd|floatformat:2 }}</td></tr>
+    <tr><td>Gastos de las propiedades</td><td class="right mal">- $ {{ liquidacion.gastos_usd|floatformat:2 }}</td></tr>
+  </table>
+  <table class="total"><tr><td>{% if liquidacion.neto_usd < 0 %}Saldo a cargo del propietario{% else %}Neto a transferir{% endif %}</td><td class="right">$ {{ liquidacion.neto_usd|floatformat:2 }}</td></tr></table>
+
+  <div class="firma"><table><tr><td width="50%">Administración</td><td width="50%">Propietario (conforme)</td></tr></table></div>
+{% endblock %}

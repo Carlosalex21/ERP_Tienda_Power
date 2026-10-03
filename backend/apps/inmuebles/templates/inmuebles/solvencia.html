@@ -1,0 +1,24 @@
+{% extends "inmuebles/base_pdf.html" %}
+{% block contenido %}
+  <div class="titulo">{% if estado.solvente %}Constancia de solvencia{% else %}Constancia de estado de cuenta{% endif %}</div>
+  <div class="subtitulo">Fecha: {{ estado.fecha|date:"d/m/Y" }}</div>
+  <div class="linea"></div>
+
+  <div class="caja" style="margin-top:16px; line-height:1.6;">
+    {% if estado.solvente %}
+      Se hace constar que la unidad <b>{{ unidad }}</b>{% if responsable %}, a nombre de <b>{{ responsable }}</b>,{% endif %}
+      <span class="ok bold">no presenta deudas vencidas</span> con la administración a la fecha indicada.
+    {% else %}
+      Se hace constar que la unidad <b>{{ unidad }}</b>{% if responsable %}, a nombre de <b>{{ responsable }}</b>,{% endif %}
+      <span class="mal bold">presenta deudas vencidas por $ {{ estado.vencido_usd|floatformat:2 }}</span>
+      a la fecha indicada, por los siguientes conceptos:
+      <ul>{% for c in estado.cuotas_vencidas %}<li>{{ c }}</li>{% endfor %}</ul>
+    {% endif %}
+  </div>
+
+  <p class="small muted" style="margin-top:12px;">
+    Este documento es informativo y refleja los registros del sistema a la fecha. No sustituye
+    los documentos que exija la ley o el reglamento de condominio.
+  </p>
+  <div class="firma"><table><tr><td width="50%">Administración</td><td width="50%"></td></tr></table></div>
+{% endblock %}

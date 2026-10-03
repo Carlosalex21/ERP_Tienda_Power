@@ -3,6 +3,7 @@ from pathlib import Path
 import os
 from datetime import timedelta
 import dj_database_url
+from celery.schedules import crontab
 
 # Import dotenv
 from dotenv import load_dotenv # type: ignore
@@ -176,6 +177,7 @@ TENANT_APPS = [
     'apps.contabilidad',
     'apps.crm',
     'apps.postventa',
+    'apps.inmuebles',
 
     # Si 'erp' y 'tienda' aún tienen modelos viejos, déjalos aquí temporalmente
     #'erp',
@@ -516,6 +518,11 @@ CELERY_BEAT_SCHEDULE = {
     'digest-alertas-urgentes': {
         'task': 'apps.reportes.tasks.enviar_digest_alertas_urgentes',
         'schedule': 3600.0,  # cada hora -- la tarea decide sola si ya avisó a este tenant hoy.
+    },
+    # Condominios e inmobiliaria: cánones del mes, contratos vencidos y mora (idempotente).
+    'cobranza-inmuebles-diaria': {
+        'task': 'apps.inmuebles.tasks.procesar_cobranza_diaria',
+        'schedule': crontab(hour=6, minute=15),
     },
 }
 

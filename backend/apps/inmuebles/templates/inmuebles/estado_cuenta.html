@@ -1,0 +1,29 @@
+{% extends "inmuebles/base_pdf.html" %}
+{% block contenido %}
+  <div class="titulo">Estado de cuenta</div>
+  <div class="subtitulo">{{ unidad }} · al {{ reporte.hasta }}</div>
+  <div class="linea"></div>
+  <table class="datos">
+    <tr><td class="muted" width="22%">Responsable</td><td>{{ responsable|default:"—" }}</td>
+        <td class="muted" width="22%">Saldo</td><td class="bold">$ {{ reporte.saldo_usd }}</td></tr>
+    <tr><td class="muted">Deuda vencida</td><td class="mal bold">$ {{ reporte.vencido_usd }}</td>
+        <td class="muted">Saldo a favor</td><td>$ {{ reporte.saldo_a_favor_usd }}</td></tr>
+  </table>
+
+  <div class="seccion">Movimientos</div>
+  <table>
+    <tr><th>Fecha</th><th>Concepto</th><th class="right">Cargo</th><th class="right">Pago</th><th class="right">Saldo</th></tr>
+    {% for m in reporte.movimientos %}
+    <tr>
+      <td>{{ m.fecha }}</td>
+      <td>{{ m.concepto }}{% if m.vencimiento %}<div class="small muted">vence {{ m.vencimiento }}</div>{% endif %}</td>
+      <td class="right">{% if m.tipo == "cargo" %}{{ m.debe }}{% endif %}</td>
+      <td class="right ok">{% if m.tipo == "pago" %}{{ m.haber }}{% endif %}</td>
+      <td class="right bold">{{ m.saldo }}</td>
+    </tr>
+    {% empty %}
+    <tr><td colspan="5" class="muted">Sin movimientos.</td></tr>
+    {% endfor %}
+  </table>
+  <div class="small muted" style="margin-top:6px;">Montos en USD. Un saldo positivo es lo que se debe.</div>
+{% endblock %}

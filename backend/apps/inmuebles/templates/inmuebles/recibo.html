@@ -1,0 +1,44 @@
+{% extends "inmuebles/base_pdf.html" %}
+{% block contenido %}
+  <div class="titulo">Recibo de pago</div>
+  <div class="subtitulo">N° {{ recibo.numero }}</div>
+  {% if recibo.estado == "anulado" %}<div class="anulado">ANULADO</div>{% endif %}
+  <div class="linea"></div>
+
+  <table class="datos">
+    <tr><td class="muted" width="22%">Fecha del pago</td><td>{{ recibo.fecha|date:"d/m/Y" }}</td>
+        <td class="muted" width="22%">Método</td><td>{{ recibo.get_metodo_display }}</td></tr>
+    <tr><td class="muted">Recibido de</td><td>{{ pagador|default:"—" }}</td>
+        <td class="muted">Referencia</td><td>{{ recibo.referencia|default:"—" }}</td></tr>
+    <tr><td class="muted">Unidad</td><td>{{ unidad }}</td>
+        <td class="muted">Banco</td><td>{{ recibo.banco|default:"—" }}</td></tr>
+  </table>
+
+  <div class="caja">
+    <table class="datos">
+      <tr><td>Monto recibido</td><td class="right bold">{{ recibo.monto_pago|floatformat:2 }} {{ recibo.moneda_pago }}</td></tr>
+      {% if recibo.moneda_pago != "USD" %}
+      <tr><td class="muted small">Tasa aplicada</td><td class="right muted small">{{ recibo.tasa|floatformat:2 }} por USD</td></tr>
+      {% endif %}
+      <tr><td>Equivalente en USD</td><td class="right bold">$ {{ recibo.monto_usd|floatformat:2 }}</td></tr>
+    </table>
+  </div>
+
+  <div class="seccion">Aplicado a</div>
+  <table>
+    <tr><th>Concepto</th><th>Período</th><th class="right">Monto (USD)</th></tr>
+    {% for a in aplicaciones %}
+    <tr><td>{{ a.cargo.concepto }}</td><td>{{ a.cargo.periodo }}</td><td class="right">{{ a.monto_usd|floatformat:2 }}</td></tr>
+    {% empty %}
+    <tr><td colspan="3" class="muted">Este pago quedó como saldo a favor.</td></tr>
+    {% endfor %}
+    {% if recibo.monto_disponible_usd > 0 %}
+    <tr><td colspan="2">Saldo a favor (se aplicará a las próximas deudas)</td><td class="right">{{ recibo.monto_disponible_usd|floatformat:2 }}</td></tr>
+    {% endif %}
+  </table>
+
+  <table class="total"><tr><td>Saldo pendiente de la unidad</td><td class="right">$ {{ saldo_pendiente|floatformat:2 }}</td></tr></table>
+
+  {% if recibo.observaciones %}<div class="small muted" style="margin-top:8px;">Observaciones: {{ recibo.observaciones }}</div>{% endif %}
+  <div class="firma"><table><tr><td width="50%">Recibido por</td><td width="50%">Conforme</td></tr></table></div>
+{% endblock %}
